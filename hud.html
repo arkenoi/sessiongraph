@@ -97,6 +97,9 @@
   .ev.fresh{animation:flash 2.4s ease-out}
   @keyframes flash{0%{background:rgba(34,102,196,.16);border-left-color:var(--c-agent)}
                    100%{background:transparent;border-left-color:transparent}}
+  .ev.err.fresh{animation:flashbad 3s ease-out}                 /* a failure arrives red */
+  @keyframes flashbad{0%{background:rgba(198,47,47,.30);border-left-color:var(--bad)}
+                      100%{background:transparent;border-left-color:var(--bad)}}
 
   #map{grid-area:map}
   #mcv{display:block;width:100%;height:calc(100% - 22px);cursor:pointer}
@@ -194,6 +197,7 @@ const CLASS = {
 };
 const COLOR = {agent:'#2266c4', artifact:'#a35f00', world:'#bf336b'};
 const CHROME = '#66748a', CORE = '#0f1722';   // chrome grey and the ink hit; not hues
+const BAD = '#c62f2f';                         // a failure's flash: the hit, the afterglow, the edge, the packet
 // a VM's power state, as the agent last saw it: green up, grey down, world hue unknown
 const VM_UP = '#12855c', VM_DOWN = '#8d97a8';
 const vmState = p => p && p.type === 'vm' ? ((NODE.get(p.id) || p.n || {}).attrs || {}).vm_state : undefined;
@@ -646,7 +650,7 @@ function spawn(n, id, verb, near){
   const cls = CLASS[n.type] || 'agent', G = field(), cx = G.cx, cy = G.cy, h = hashf(id);
   const dir = VERB_DIR[verb] ?? 0;
   const p = {id, n, cls, type:n.type, verb: verb || '', touches:0, burn:0, last:-1e9, lastOwn:-1e9, first:1e18,
-             flash:1, ok:0, err:false, fade:1, grow:1, seed:h, vx:0, vy:0, deg:0, rad:9, hist:[]};
+             flash:FLASH ? 1 : 0, ok:0, err:false, fade:1, grow:1, seed:h, vx:0, vy:0, deg:0, rad:9, hist:[]};
   const kept = POS.get(id);
   const a = (h % 360) * Math.PI/180;
   if (kept && Math.hypot((kept.x-cx)/G.Rx, (kept.y-cy)/G.Ry) < 1.05){ p.x = kept.x; p.y = kept.y; p.fade = 0.4; }
@@ -670,11 +674,12 @@ function ensure(id, ref, verb, near){
   p.first = Math.min(p.first, ref);
   return p;
 }
+let FLASH = true;                                    // only what is happening now flashes; a backlog arrives quietly
 function touch(p, ref, verb, e, o){
-  p.touches++; p.last = ref; p.lastOwn = ref; p.flash = 1;
+  p.touches++; p.last = ref; p.lastOwn = ref; if (FLASH){ p.flash = 1; p.flashBad = false; }
   if (verb) p.verb = verb;
   if (e){
-    p.err = o ? !!o.fail : !!e.err; p.target = e.target;
+    p.err = o ? !!o.fail : !!e.err; p.target = e.target; if (FLASH) p.flashBad = p.err;
     p.burn += o ? (o.share || 0) : (e.usd || 0)/Math.max(1, (e.nodes||[]).length);
     if (e.outcome === 'ok' && verb === 'evaluate') p.ok = 1;      // the quiet confirmation
   }
@@ -692,7 +697,7 @@ function link(src, dst, type, ref, extra){
   const k = src+'>'+dst+'>'+type;
   let e = EDGES.get(k);
   if (!e){ e = {src, dst, type, w:0, first:ref, last:-1e9, ...(extra||{})}; EDGES.set(k, e); dirty = true; }
-  e.w++; e.last = ref; e.flash = 1;
+  e.w++; e.last = ref; if (FLASH){ e.flash = 1; e.bad = !!(extra && extra.bad); }
   if (extra && extra.verb) e.verb = extra.verb;
   return e;
 }
@@ -705,6 +710,7 @@ function feed(e){
   // the event's own time, not the head's: a backlog fed in one frame (opening
   // live) must keep its order, or every thing ties on recency and the oldest win
   const ref = Math.min(refTime(), e.ts || Infinity);
+  FLASH = mode !== 'live' || refTime() - (e.ts || 0) < 15;
   const agentId = e.sidechain ? SUB : MAIN;
   const A = ensure(agentId, ref); touch(A, ref);
   if (e.sidechain){ ensure(MAIN, ref); link(MAIN, SUB, 'SPAWNED', ref); }
@@ -728,7 +734,8 @@ function feed(e){
         if (!targets.has(srcId)){
           touch(S, ref);
           if (acts){                                // the parser did not say the actor ran it; it did
-            link(agentId, srcId, 'TOUCH', ref, {verb:'run', tool:e.tool}); remember(A, S, 'run'); }
+            link(agentId, srcId, 'TOUCH', ref, {verb:'run', tool:e.tool, bad:fail}); remember(A, S, 'run'); }
+          if (FLASH) S.flashBad = fail;             // the instrument that failed flashes red too
         }
       }
     }
@@ -741,7 +748,7 @@ function feed(e){
       S.lastReq = {verb, dst: d, t: ref};
       S.reqs = [d, ...(S.reqs || []).filter(x => x !== d)].slice(0, GATE_LEAVES);
     }
-    link(srcId, d, 'TOUCH', ref, {verb, tool:e.tool});
+    link(srcId, d, 'TOUCH', ref, {verb, tool:e.tool, bad:fail});
     if (verb === 'against' || verb === 'call'){      // a call to a service: count it, keep what it answered
       P.calls = (P.calls||0) + 1;
       if (e.scores && (e.api == null || e.api === d)) P.scores = e.scores;
@@ -1022,7 +1029,8 @@ function drawStream(now){
     else { col = COLOR[b.cls]; alpha = 0.16 + 0.36*hot; width = 1; }
     ctx.lineWidth = width + 2.8; ctx.strokeStyle = hexA(col, alpha*0.26*fade); edgePath(ctx, e, a, b); ctx.stroke();
     ctx.lineWidth = Math.max(1, width*0.8); ctx.strokeStyle = hexA(col, alpha*0.9*fade); edgePath(ctx, e, a, b); ctx.stroke();
-    if (fresh > 0.02){ ctx.lineWidth = 1; ctx.strokeStyle = hexA(CORE, 0.55*fresh*fade); edgePath(ctx, e, a, b); ctx.stroke(); }
+    if (fresh > 0.02){ ctx.lineWidth = e.bad ? 2.2 : 1; ctx.strokeStyle = hexA(e.bad ? BAD : CORE, (e.bad ? 0.9 : 0.55)*fresh*fade);
+                       edgePath(ctx, e, a, b); ctx.stroke(); }
     if (e.type === 'TOUCH'){
       const dir = VERB_DIR[e.verb] ?? 0;
       if (dir > 0){ const q = along(e, a, b, 0.56); head(ctx, q.x, q.y, q.ang, col, (0.35 + 0.6*fresh)*fade, 5); }
@@ -1038,12 +1046,12 @@ function drawStream(now){
       if (e.type === 'TOUCH' && (e.verb === 'against' || e.verb === 'call')){
         // a call: the request goes out, then the answer comes back in the service's own hue
         const out = fresh > 0.5, t = out ? (1 - fresh)*2 : fresh*2, q = along(e, a, b, t);
-        ctx.fillStyle = out ? hexA(CORE, 0.9) : hexA(col, 0.95);
+        ctx.fillStyle = out ? hexA(e.bad ? BAD : CORE, 0.9) : hexA(e.bad ? BAD : col, 0.95);
         ctx.beginPath(); ctx.arc(q.x, q.y, out ? 2.6 : 3.4, 0, 7); ctx.fill();
-        if (!out){ ctx.strokeStyle = hexA(col, 0.5); ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(q.x, q.y, 6 + (0.5-fresh)*10, 0, 7); ctx.stroke(); }
+        if (!out){ ctx.strokeStyle = hexA(e.bad ? BAD : col, 0.5); ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(q.x, q.y, 6 + (0.5-fresh)*10, 0, 7); ctx.stroke(); }
       } else {
         const q = along(e, a, b, 1 - fresh);
-        ctx.fillStyle = hexA(CORE, fresh*0.9); ctx.beginPath(); ctx.arc(q.x, q.y, 2.4 + fresh*2.4, 0, 7); ctx.fill();
+        ctx.fillStyle = hexA(e.bad ? BAD : CORE, fresh*0.9); ctx.beginPath(); ctx.arc(q.x, q.y, (e.bad ? 3.2 : 2.4) + fresh*2.4, 0, 7); ctx.fill();
       }
     }
   }
@@ -1078,15 +1086,15 @@ function drawStream(now){
     }
     const sc = ghost ? mixHex(col, CHROME, 1 - f/0.3) : col;        // stroke colour
     if (p.flash > 0 && !reduce && !dying){                          // phosphor: a white hit, then an afterglow in the hue
-      const white = p.flash > 0.9;
-      ctx.fillStyle = white ? hexA(CORE, 0.85) : hexA(col, 0.3*p.flash);
-      ctx.beginPath(); ctx.arc(p.x, p.y, r + (white ? 3 : 2 + 9*p.flash), 0, 7); ctx.fill();
+      const white = p.flash > 0.9, fc = p.flashBad ? BAD : null;   // a failure: a red hit, a red afterglow, wider
+      ctx.fillStyle = white ? hexA(fc || CORE, 0.85) : hexA(fc || col, (fc ? 0.45 : 0.3)*p.flash);
+      ctx.beginPath(); ctx.arc(p.x, p.y, r + (white ? (fc ? 5 : 3) : (fc ? 3 + 14*p.flash : 2 + 9*p.flash)), 0, 7); ctx.fill();
     }
     if (act && !reduce && !dying){ ctx.strokeStyle = hexA(col, 0.5*(1-bb)); ctx.lineWidth = 1.6;
       ctx.beginPath(); ctx.arc(p.x, p.y, r + 5 + bb*13, 0, 7); ctx.stroke(); }
     ctx.shadowColor = col; ctx.shadowBlur = ghost ? 0 : 6 + hot*18 + bb*18;
     if (ghost || vmProjected(p)) ctx.setLineDash([3, 3]);         // a projected state is drawn dashed
-    const iconCol = p.flash > 0.9 && !dying ? CORE : sc;
+    const iconCol = p.flash > 0.9 && !dying ? (p.flashBad ? BAD : CORE) : sc;
     if (p.id === MAIN){
       ctx.fillStyle = 'rgba(15,23,34,.9)'; ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.fill();
     } else if (inst){                                 // instruments: rounded squares. Not things; they act
