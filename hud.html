@@ -7,12 +7,12 @@
 <link rel="icon" href="data:,">
 <style>
   :root{
-    --surface-0:#070b14; --surface-1:#0d1526; --surface-2:#16233a;
-    --line:rgba(138,148,166,.22); --line-hot:rgba(138,148,166,.55); --chrome:#8a94a6;
-    --ink:#f2f6fb; --ink-2:#b2c2d6; --ink-3:#8296ae;
-    /* categorical: validated all-pairs on this surface (worst CVD dE 13.2) */
-    --c-agent:#3987e5; --c-artifact:#c98500; --c-world:#d55181;
-    --neutral:#5f7391; --bad:#e66767; --good:#199e70;
+    --surface-0:#ffffff; --surface-1:#f7f9fc; --surface-2:#edf1f7;
+    --line:rgba(60,75,100,.18); --line-hot:rgba(60,75,100,.45); --chrome:#66748a;
+    --ink:#0f1722; --ink-2:#34445a; --ink-3:#5b6b82;
+    /* categorical: deepened for a white surface */
+    --c-agent:#2266c4; --c-artifact:#a35f00; --c-world:#bf336b;
+    --neutral:#5f7391; --bad:#c62f2f; --good:#12855c;
     --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
   }
   *{box-sizing:border-box}
@@ -20,17 +20,17 @@
   body{
     margin:0; background:var(--surface-0); color:var(--ink); font-family:var(--mono);
     font-size:14px; overflow:hidden;
-    background-image:radial-gradient(ellipse at 50% -20%,rgba(138,148,166,.07),transparent 60%);
+    background-image:radial-gradient(ellipse at 50% -20%,rgba(60,75,100,.05),transparent 60%);
   }
   body::after{
     content:""; position:fixed; inset:0; pointer-events:none; z-index:50;
     background:repeating-linear-gradient(0deg,rgba(255,255,255,.008) 0 1px,transparent 1px 4px);
-    mix-blend-mode:screen;
+    mix-blend-mode:screen; display:none;
   }
   .grid{
-    display:grid; height:100%; gap:10px; padding:10px;
-    grid-template-columns:250px minmax(0,1fr) 320px;
-    grid-template-rows:auto minmax(0,1fr) 124px;
+    display:grid; height:100%; gap:6px; padding:6px;
+    grid-template-columns:150px minmax(0,1fr) 200px;
+    grid-template-rows:auto minmax(0,1fr) 96px;
     grid-template-areas:"now now now" "tiles stream feed" "map map map";
   }
   .panel{
@@ -58,15 +58,15 @@
   #doing{flex:1 1 auto;min-width:0;color:var(--ink-2);font-size:16px;
          overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #doing b{color:var(--ink);font-weight:600}
-  #elapsed{font-size:23px;color:var(--ink);font-variant-numeric:tabular-nums}
+  #elapsed{font-size:16px;color:var(--ink);font-variant-numeric:tabular-nums}
   .meta{font-size:12px;color:var(--ink-3);text-align:right;line-height:1.45;white-space:nowrap}
 
-  #tiles{grid-area:tiles; display:grid; grid-template-columns:1fr 1fr; gap:10px; align-content:start; overflow:auto}
-  .tile{padding:9px 10px 11px}
-  .tile .k{font-size:12px;letter-spacing:.12em;color:var(--ink-3);text-transform:uppercase}
-  .tile .v{font-size:26px;line-height:1.15;margin-top:5px;font-variant-numeric:tabular-nums}
-  .tile .s{font-size:12px;color:var(--ink-3);margin-top:2px}
-  .tile.hero{grid-column:1/-1} .tile.hero .v{font-size:38px}
+  #tiles{grid-area:tiles; display:grid; grid-template-columns:1fr; gap:6px; align-content:start; overflow:auto}
+  .tile{padding:6px 8px 7px}
+  .tile .k{font-size:11px;letter-spacing:.06em;color:var(--ink-3);text-transform:uppercase}
+  .tile .v{font-size:13px;line-height:1.15;margin-top:3px;font-variant-numeric:tabular-nums}
+  .tile .s{font-size:11px;color:var(--ink-3);margin-top:2px}
+  .tile.hero{grid-column:1/-1} .tile.hero .v{font-size:12px}
 
   #streamwrap{grid-area:stream; overflow:hidden}
   #cv{display:block;width:100%;height:100%;cursor:ew-resize}
@@ -78,30 +78,35 @@
   .sw-world{background:var(--c-world);clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
   #hint{position:absolute;right:10px;bottom:7px;font-size:12px;color:var(--ink-3)}
   #glyphs{position:absolute;left:10px;bottom:26px;pointer-events:none;opacity:.95}
+  #fsbtn{position:absolute;right:8px;top:6px;z-index:5;font:11px var(--mono);letter-spacing:.06em;color:var(--ink-2);
+         background:var(--surface-0);border:1px solid var(--line-hot);border-radius:2px;padding:3px 7px;cursor:pointer}
+  #fsbtn:hover{color:var(--ink);border-color:var(--ink-3)}
+  body.focus #streamwrap{position:fixed;inset:0;z-index:40;border:0;border-radius:0}
+  body.focus #glyphs, body.focus #hint{display:none}
   #mode{position:absolute;left:10px;bottom:7px;font-size:12px;letter-spacing:.14em;
         text-transform:uppercase;color:var(--c-agent)}
 
   #feed{grid-area:feed; display:flex; flex-direction:column}
   #feedlist{overflow:auto;padding:4px 0 8px}
-  .ev{display:flex;gap:8px;padding:3px 10px;align-items:baseline;border-left:2px solid transparent}
-  .ev .t{font-size:12px;color:var(--ink-3);width:62px;flex:none;font-variant-numeric:tabular-nums}
-  .ev .n{font-size:13px;flex:none}
-  .ev .g{font-size:12.5px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .ev .b{font-size:12px;color:var(--ink-3);margin-left:auto;flex:none}
+  .ev{display:flex;gap:4px;padding:1px 5px;align-items:baseline;border-left:2px solid transparent}
+  .ev .t{font-size:8px;color:var(--ink-3);width:24px;flex:none;font-variant-numeric:tabular-nums}
+  .ev .n{font-size:8.5px;flex:none}
+  .ev .g{font-size:8px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ev .b{font-size:8px;color:var(--ink-3);margin-left:auto;flex:none}
   .ev.err{border-left-color:var(--bad)} .ev.err .n{color:var(--bad)}
   .ev.fresh{animation:flash 2.4s ease-out}
-  @keyframes flash{0%{background:rgba(57,135,229,.42);border-left-color:var(--c-agent)}
+  @keyframes flash{0%{background:rgba(34,102,196,.16);border-left-color:var(--c-agent)}
                    100%{background:transparent;border-left-color:transparent}}
 
   #map{grid-area:map}
   #mcv{display:block;width:100%;height:calc(100% - 22px);cursor:pointer}
 
   #tip{position:fixed;z-index:60;pointer-events:none;display:none;max-width:380px;
-       background:#050810;border:1px solid var(--line-hot);border-radius:2px;
-       padding:9px 11px;font-size:13px;line-height:1.55;box-shadow:0 6px 24px rgba(0,0,0,.6)}
+       background:#ffffff;border:1px solid var(--line-hot);border-radius:2px;
+       padding:9px 11px;font-size:13px;line-height:1.55;box-shadow:0 6px 24px rgba(15,23,34,.14)}
   #tip .h{color:var(--ink);font-weight:600} #tip .r{color:var(--ink-2)}
   #picker{position:fixed;inset:60px 10% 60px 10%;z-index:72;display:none;overflow:auto;
-          background:#050810;border:1px solid var(--line-hot);padding:16px}
+          background:#ffffff;border:1px solid var(--line-hot);padding:16px}
   #picker h3{margin:0 0 12px;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
   .sess{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:baseline;
         padding:8px 10px;border:1px solid var(--line);margin-bottom:6px;cursor:pointer;background:var(--surface-1)}
@@ -115,20 +120,20 @@
   #nowmeta{cursor:pointer}
   #nowmeta:hover{color:var(--ink-2)}
   #table{position:fixed;inset:24px;z-index:70;display:none;overflow:auto;
-         background:#050810;border:1px solid var(--line-hot);padding:16px}
+         background:#ffffff;border:1px solid var(--line-hot);padding:16px}
   table{border-collapse:collapse;width:100%;font-size:12px}
   th,td{text-align:left;padding:4px 10px;border-bottom:1px solid var(--line)}
   th{color:var(--ink-3);font-size:12px;letter-spacing:.12em;text-transform:uppercase}
   td.num{text-align:right;font-variant-numeric:tabular-nums}
   @media (prefers-reduced-motion:reduce){#dot.on{animation:none}.ev.fresh{animation:none}body::after{display:none}}
-  @media (max-width:1000px){
+  @media (max-width:760px){
     .grid{grid-template-columns:1fr;grid-template-rows:auto auto minmax(320px,1fr) auto 120px;
           grid-template-areas:"now" "tiles" "stream" "feed" "map";overflow:auto;height:auto}
     body{overflow:auto} #tiles{grid-template-columns:repeat(3,1fr)}
   }
 </style>
 </head>
-<body data-palette="#3987e5,#c98500,#d55181" data-mode="dark">
+<body data-palette="#2266c4,#a35f00,#bf336b" data-mode="light">
 <div class="grid">
   <div class="panel" id="now">
     <span id="dot" class="off"></span><span id="status">connecting</span>
@@ -155,9 +160,10 @@
 
   <div class="panel" id="streamwrap">
     <canvas id="cv"></canvas>
+    <button id="fsbtn" title="graph fullscreen, legend hidden (F)">⛶ full</button>
         <canvas id="glyphs" width="1740" height="168"></canvas>
     <div id="mode">live</div>
-    <div id="hint">drag scrub · wheel zoom · - / = universe size · S sessions · R replay · T table · space freeze</div>
+    <div id="hint">drag scrub · wheel zoom · - / = universe size · S sessions · R replay · T table · F full · space freeze</div>
   </div>
 
   <div class="panel" id="feed">
@@ -185,8 +191,8 @@ const CLASS = {
   vm:'world', host:'world', service:'world', api:'world', url:'world', domain:'world', search:'world',
   gh_repo:'world', pr:'world', issue:'world', run:'world', process:'world', package:'world'
 };
-const COLOR = {agent:'#3987e5', artifact:'#c98500', world:'#d55181'};
-const CHROME = '#8a94a6', CORE = '#e8f0ff';   // chrome grey and the phosphor hit; not hues
+const COLOR = {agent:'#2266c4', artifact:'#a35f00', world:'#bf336b'};
+const CHROME = '#66748a', CORE = '#0f1722';   // chrome grey and the ink hit; not hues
 const ROLE_ICON = new Set(['tool','log','test','doc','media','archive','ci','scratch']);
 const roleOf = n => (n && n.attrs && n.attrs.role) || '';
 const isInstrument = p => !!p && (p.instrument || p.type === 'prog' || p.type === 'command' || p.type === 'tool'
@@ -363,7 +369,7 @@ function paintChrome(){
     const key = (e.ts||0)+e.tool+(e.target||'');
     const fresh = !replay && !seenEv.has(key) && seenEv.size; seenEv.add(key);
     const cls = CLASS[toolClass(e.tool)]||'agent';
-    return `<div class="ev ${e.err?'err':''} ${fresh?'fresh':''}"><span class="t">${clock(e.ts)}</span>`+
+    return `<div class="ev ${e.err?'err':''} ${fresh?'fresh':''}"><span class="t">${clock(e.ts).slice(0,5)}</span>`+
       `<span class="n" style="color:${COLOR[cls]}">${esc(e.tool)}</span>`+
       `<span class="g">${esc(e.target||'')}</span>`+
       `<span class="b">${e.bytes?fmtK(e.bytes)+'B':''}</span></div>`;
@@ -391,10 +397,10 @@ function drawEkg(){
   for (let i=0;i<bins;i++){
     if (!out[i]) continue;
     const bh = (out[i]/max)*(h-6), age = (1-i/bins)*span;
-    ex.fillStyle = `rgba(57,135,229,${0.3+0.7*Math.exp(-age/60)})`;
+    ex.fillStyle = `rgba(34,102,196,${0.3+0.7*Math.exp(-age/60)})`;
     ex.fillRect(i*bw, h-bh-2, Math.max(1.5,bw-1.5), bh);
   }
-  ex.strokeStyle='rgba(138,148,166,.28)'; ex.beginPath(); ex.moveTo(0,h-1.5); ex.lineTo(w,h-1.5); ex.stroke();
+  ex.strokeStyle='rgba(60,75,100,.28)'; ex.beginPath(); ex.moveTo(0,h-1.5); ex.lineTo(w,h-1.5); ex.stroke();
 }
 
 
@@ -602,7 +608,7 @@ let KEY_H = 84;                   // the glyph key's height in CSS px, set when 
 // between the top of the panel and the glyph key, so the outer ring and the box
 // that holds bodies agree. Zoom spreads it, but never past that box.
 function field(){
-  const top = 30, bottom = C.h - KEY_H - 36;
+  const top = 30, bottom = C.h - (document.body.classList.contains('focus') ? 0 : KEY_H) - 36;
   const cy = (top + bottom)/2, hy = Math.max(50, (bottom - top)/2 - 6), hx = Math.max(80, C.w/2 - 44);
   const Ry = Math.min(hy, hx), Rx = Math.min(hx, Ry*1.4);
   return {cx: C.w/2, cy, top, bottom, Rx: Math.min(hx, Rx*ZOOM), Ry: Math.min(hy, Ry*ZOOM)};
@@ -858,6 +864,17 @@ function fit(c){ const d=Math.min(2,devicePixelRatio||1), r=c.getBoundingClientR
   c.width=Math.max(1,r.width*d); c.height=Math.max(1,r.height*d); return {w:r.width,h:r.height,d}; }
 let C = fit(cv);
 addEventListener('resize', () => { C = fit(cv); keyW = 0; drawMap(); });
+// focus: the field alone, filling the screen, without the glyph key
+function setFocus(on){
+  document.body.classList.toggle('focus', on);
+  $('fsbtn').textContent = on ? '✕ exit' : '⛶ full';
+  if (on && document.fullscreenEnabled && !document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+  if (!on && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  C = fit(cv); keyW = 0; dirty = true;
+}
+$('fsbtn').addEventListener('click', ev => { ev.stopPropagation(); setFocus(!document.body.classList.contains('focus')); });
+$('fsbtn').addEventListener('mousedown', ev => ev.stopPropagation());
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && document.body.classList.contains('focus')) setFocus(false); });
 
 const gk = $('glyphs'), gx = gk.getContext('2d');
 let keyW = 0;
@@ -877,7 +894,7 @@ function drawGlyphKey(){
   };
   for (const [lab, dir] of [['← in', -1], ['↔ both', 0], ['→ out', 1]])      // what came back, both ways, what went out
     flow(lab, x0, VERBS.filter(v => (VERB_DIR[v] ?? 0) === dir).map(v => ({v})), it => 11 + mw(it.v) + pad);
-  const KIND = [['#c98500','artifacts'],['#3987e5','agent · instruments'],['#d55181','world']];
+  const KIND = [['#a35f00','artifacts'],['#2266c4','agent · instruments'],['#bf336b','world']];
   flow('', 10, [...KIND.map(([c,t]) => ({swatch:c, t})), {text:'agent → instrument → thing · folder ⊃ file · size = burn · ×n = returns'}],
        it => it.swatch ? 13 + mw(it.t) + 16 : mw(it.text) + pad);
   const H = lines.length*rh + 6;
@@ -888,9 +905,9 @@ function drawGlyphKey(){
     const y = 12 + i*rh;
     if (ln.label){ gx.fillStyle = CHROME; gx.fillText(ln.label, 10, y+0.5); }
     for (const it of ln.items){
-      if (it.v){ glyph(gx, it.v, it.x, y, 5.4, '#b2c2d6', 1); gx.fillStyle = '#b2c2d6'; gx.fillText(it.v, it.x+11, y+0.5); }
+      if (it.v){ glyph(gx, it.v, it.x, y, 5.4, '#34445a', 1); gx.fillStyle = '#34445a'; gx.fillText(it.v, it.x+11, y+0.5); }
       else if (it.swatch){ gx.fillStyle = it.swatch; gx.beginPath(); gx.arc(it.x+4, y, 4.5, 0, 7); gx.fill();
-                           gx.fillStyle = '#b2c2d6'; gx.fillText(it.t, it.x+13, y+0.5); }
+                           gx.fillStyle = '#34445a'; gx.fillText(it.t, it.x+13, y+0.5); }
       else { gx.fillStyle = CHROME; gx.fillText(it.text, it.x, y+0.5); }
     }
   });
@@ -951,7 +968,7 @@ function drawStream(now){
   const running = new Set();
   if (mode === 'live') for (const i of (snap.state.inflight||[])) for (const id of (i.nodes||[])) running.add(id);
   const glyphs = [];
-  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalCompositeOperation = 'multiply';
   for (const e of EDGES.values()){
     const a = ENT.get(e.src), b = ENT.get(e.dst); if (!a || !b) continue;
     const hot = Math.max(a.prox||0, b.prox||0), fresh = e.flash || 0;
@@ -1030,7 +1047,7 @@ function drawStream(now){
     if (ghost) ctx.setLineDash([3, 3]);
     const iconCol = p.flash > 0.9 && !dying ? CORE : sc;
     if (p.id === MAIN){
-      ctx.fillStyle = 'rgba(242,246,251,.9)'; ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.fill();
+      ctx.fillStyle = 'rgba(15,23,34,.9)'; ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.fill();
     } else if (inst){                                 // instruments: rounded squares. Not things; they act
       rrect(ctx, p.x-r, p.y-r, 2*r, 2*r, Math.min(6, r*0.4));
       if (showFill){ ctx.fillStyle = hexA(col, 0.22 + 0.25*hot); ctx.fill(); }
@@ -1051,7 +1068,7 @@ function drawStream(now){
       if (showFill) kindIcon(ctx, iconFor(p), p.x, p.y, Math.min(5.6, r*0.6)*Math.min(1, p.grow*1.6), iconCol, 0.95);
     }
     ctx.setLineDash([]);
-    if (p.err){ ctx.strokeStyle = '#e66767'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x, p.y, r + 4, 0, 7); ctx.stroke(); }
+    if (p.err){ ctx.strokeStyle = '#c62f2f'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x, p.y, r + 4, 0, 7); ctx.stroke(); }
     if (p.ok > 0){                                    // an evaluation came back clean: a second thin ring, own hue, drifting out
       ctx.strokeStyle = hexA(col, 0.85*p.ok); ctx.lineWidth = 1;
       ctx.beginPath(); ctx.arc(p.x, p.y, r + 7 + (1-p.ok)*7, 0, 7); ctx.stroke();
@@ -1069,8 +1086,8 @@ function drawStream(now){
         ctx.font = '12px ui-monospace,monospace'; ctx.textAlign = 'center';
         const sw = ctx.measureText(st).width, sb = [p.x-sw/2-2, p.y+r+18, p.x+sw/2+2, p.y+r+32];
         if (!boxes.some(b2 => overlap(sb, b2))){ boxes.push(sb);
-          ctx.fillStyle = 'rgba(8,13,24,.8)'; ctx.fillRect(sb[0], sb[1], sb[2]-sb[0], sb[3]-sb[1]);
-          ctx.fillStyle = hexA(lo < 0.6 ? '#e66767' : '#f2f6fb', .95); ctx.fillText(st, p.x, p.y + r + 29); }
+          ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.fillRect(sb[0], sb[1], sb[2]-sb[0], sb[3]-sb[1]);
+          ctx.fillStyle = hexA(lo < 0.6 ? '#c62f2f' : '#0f1722', .95); ctx.fillText(st, p.x, p.y + r + 29); }
       }
     }
     ctx.restore();
@@ -1086,8 +1103,8 @@ function drawStream(now){
     let lab = place(p.x >= cx); if (bad(lab)) lab = place(!lab.right);
     if (!bad(lab) && (hot > 0.25 || isHub || r > 9 || p.deg > 2)){
       boxes.push(lab.box); ctx.textAlign = lab.right ? 'left' : 'right';
-      ctx.fillStyle = 'rgba(8,13,24,.8)'; ctx.fillRect(lab.box[0], lab.box[1], lab.box[2]-lab.box[0], lab.box[3]-lab.box[1]);
-      ctx.fillStyle = hexA(hot > .3 || isHub ? '#f2f6fb' : '#b2c2d6', p.fade);
+      ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.fillRect(lab.box[0], lab.box[1], lab.box[2]-lab.box[0], lab.box[3]-lab.box[1]);
+      ctx.fillStyle = hexA(hot > .3 || isHub ? '#0f1722' : '#34445a', p.fade);
       ctx.fillText(txt, lab.lx, ly);
     }
   }
@@ -1151,6 +1168,7 @@ cv.addEventListener('wheel', ev => {           // spread the field out, or draw 
 addEventListener('keydown', ev => {
   const k = ev.key.toLowerCase();
   if (k===' '){ frozen = !frozen; ev.preventDefault(); }
+  if (k==='f') setFocus(!document.body.classList.contains('focus'));
   if (k==='t') showTable();
   if (k==='s') showPicker();
   if (k==='r'){ ENT.clear(); EDGES.clear(); ptr = 0; mode==='live' ? startReplay() : goLive(); }
@@ -1173,9 +1191,9 @@ function drawMap(){
   const pad = {l:50,r:10,t:10,b:16}, iw = w-pad.l-pad.r, ih = h-pad.t-pad.b;
   $('mapinfo').textContent = 'peak '+fmtUsd(max)+' · '+S.length+' turns · drag the field to scrub';
   mx2.font='12px ui-monospace,monospace'; mx2.textAlign='right';
-  mx2.strokeStyle='rgba(138,148,166,.28)';
+  mx2.strokeStyle='rgba(60,75,100,.28)';
   mx2.beginPath(); mx2.moveTo(pad.l,pad.t+ih); mx2.lineTo(w-pad.r,pad.t+ih); mx2.stroke();
-  mx2.fillStyle='#8a94a6'; mx2.fillText(fmtUsd(max), pad.l-8, pad.t+8);
+  mx2.fillStyle='#66748a'; mx2.fillText(fmtUsd(max), pad.l-8, pad.t+8);
   const bw = Math.max(1.5, iw/S.length - 1.5);
   S.forEach((s,i) => {
     const x = pad.l + (iw/S.length)*i, bh = Math.max(1.5,(s.usd/max)*ih);
@@ -1185,7 +1203,7 @@ function drawMap(){
   const fx = f => { const t0=flows[0], t1=flows[flows.length-1];
     return pad.l + iw*Math.max(0,Math.min(1,(f-t0)/Math.max(1e-6,t1-t0))); };
   const headF = flowOf(ref);
-  mx2.strokeStyle='rgba(242,246,251,.8)'; mx2.lineWidth=1.6;
+  mx2.strokeStyle='rgba(15,23,34,.75)'; mx2.lineWidth=1.6;
   mx2.beginPath(); mx2.moveTo(fx(headF),pad.t); mx2.lineTo(fx(headF),pad.t+ih); mx2.stroke();
 }
 mcv.addEventListener('click', ev => {
