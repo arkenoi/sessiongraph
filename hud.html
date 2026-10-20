@@ -480,7 +480,9 @@ const LINK = 90;           // how long the link to the stream lingers
 let PXPS = 3.4;            // px of drift per second of session time (wheel)
 let ptr = 0, prevFlow = null, lastRefSeen = null;
 
-const hashf = s => { let h = 0; for (let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i))|0; return h; };
+// unsigned: a negative hash made `h % n` negative, which threw new bodies past
+// the head into the future
+const hashf = s => { let h = 0; for (let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i))|0; return Math.abs(h); };
 
 function spawn(n, id, verb){
   const cls = CLASS[n.type] || 'agent', b = BAND[cls];
