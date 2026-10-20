@@ -154,8 +154,10 @@ def main():
             for sdoc in items:
                 if not isinstance(sdoc, dict):
                     continue
-                print(f"{sdoc.get('id','?'):<34} {str(sdoc.get('session_status','')).replace('SESSION_STATUS_',''):<9} "
-                      f"{(sdoc.get('updated_at') or sdoc.get('created_at') or '')[:16]:<17} {str(sdoc.get('title',''))[:60]}")
+                status = str(sdoc.get('status') or sdoc.get('session_status') or '').replace('SESSION_STATUS_', '')
+                when = sdoc.get('last_event_at') or sdoc.get('updated_at') or sdoc.get('created_at') or ''
+                print(f"{sdoc.get('id','?'):<34} {status:<9} {str(when)[:16]:<17} "
+                      f"{str(sdoc.get('environment_kind') or ''):<16} {str(sdoc.get('title',''))[:56]}")
                 shown += 1
             nxt = next_cursor(doc, items)
             if not nxt or nxt == cursor or shown >= 200:
