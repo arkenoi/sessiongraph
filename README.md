@@ -225,30 +225,33 @@ its target, a cadence strip of tool calls over the last three minutes, seconds
 since the last record, model and effort. Then burn rate over the trailing five
 minutes, total spend, context size of the last request, cache hit rate.
 
-**The field.** The main panel is the session as a drift field. Down the middle
-runs the stream — the walk itself, its height the cost of each turn — flowing
-toward a head at *now*. Everything the agent touches is a body in that field:
+**The field.** The main panel is centred on the work, not the clock. The agent
+is the core; everything it touches sits around it:
 
-- A body **drifts left with time**, roughly, and **outward as it goes stale**, so
-  the view scrolls without time being a hard axis.
-- **Coming back to something does not draw it again.** The body that is already
-  there is pulled back toward the stream and its link relights, with a `×n`
-  counter for how many times you have returned to it. A file read twelve times is
-  one large body near the line, not twelve marks.
+- **Distance is attention.** The thing most recently worked on holds the centre,
+  the next one sits just outside it, and so on out to the rim. It is a *rank*,
+  not a clock reading — measuring in seconds put every body at the rim on any
+  session that had gone quiet, which is most of them.
+- **Coming back to something does not draw it again.** The body already there is
+  pulled back toward the centre and its link relights, with a `×n` counter for
+  how many times you have returned to it.
 - **Size is what it burned.** Each call's turn cost is split across what it
   touched and accumulates on the body, scaled against the heaviest thing on
   screen, so the expensive parts of a session are literally the big ones.
+- **Each kind gets a slice of the circle in proportion to how much of it there
+  is**, so twenty-five commands are not crushed into the same wedge as three
+  files, and bodies push each other apart rather than stacking.
 - **How a thing arrives says what happened.** Something the agent *makes* — a
-  write, a commit, a push, a spawn — is thrown out of the stream and swells as it
+  write, a commit, a push, a spawn — is thrown out of the core and swells as it
   flies. Something that already existed and is only now *reached for* — a read, a
-  search, a fetch — surfaces out of the dark where it always was.
+  search, a fetch — surfaces out of the dark at the rim and is drawn inward.
 - **A body with a call running on it pulses**, with a halo expanding off it;
-  everything else recently touched breathes faintly, so the field is never dead
-  still while work is happening.
-- Colour is the kind of thing, the glyph is the verb, the arrow on the link is
-  which way the data went, and a red ring means the call failed.
+  everything else recent breathes faintly, so the field is never dead still
+  while work is happening.
+- Colour is the kind of thing, the glyph is the verb, and a red ring means the
+  call failed.
 
-Bodies that go untouched long enough drift off the back and are dropped.
+
 
 **Replay.** On load the head starts at the first record and sweeps the whole
 session in about 25 seconds, lighting each touch as it passes and counting the

@@ -465,44 +465,30 @@ function kindIcon(c, type, x, y, s, col, fade){
 }
 
 // ------------------------------------------------------------- the field ----
-// Entities are not pinned to the instant they were touched. Each one is a body
-// that drifts left with time and outward as it goes stale; a fresh touch pulls
-// it back toward the stream and relights its link. So calling the same file
-// twice does not draw it twice -- it brings the one that is already there back.
+// Centred on the work, not on the clock. The agent is the core; everything it
+// touches sits around it at a distance set by how long ago it was touched.
+// Coming back to something pulls it inward again -- it is never drawn twice.
 const ENT = new Map();
-const BAND = {
-  artifact: {dir:-1, inner:0.09, outer:0.38},
-  world:    {dir: 1, inner:0.09, outer:0.38},
-  agent:    {dir: 0, inner:0.03, outer:0.15},
+const SECTOR = {                       // degrees; 0 = right, 90 = down
+  artifact: {c:-90, w:150},            // what it makes and reads, above
+  agent:    {c:170, w:120},            // what it runs, to the left
+  world:    {c: 20, w:120},            // what it reaches for outside, to the right
 };
-const HOT = 34;            // seconds of session time a touch stays "current"
-const LINK = 90;           // how long the link to the stream lingers
-let PXPS = 3.4;            // px of drift per second of session time (wheel)
-let ptr = 0, prevFlow = null, lastRefSeen = null;
+const HOT = 50;        // seconds of session time before a thing is fully cold
+let ZOOM = 1;
+let ptr = 0, lastRefSeen = null;
 
-// unsigned: a negative hash made `h % n` negative, which threw new bodies past
-// the head into the future
 const hashf = s => { let h = 0; for (let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i))|0; return Math.abs(h); };
+const RAD = () => Math.min(C.w*0.56, C.h*0.52) - 26;
+const RIN = () => RAD()*0.31*ZOOM, ROUT = () => RAD()*0.95*ZOOM;
 
 function spawn(n, id, verb){
-  const cls = CLASS[n.type] || 'agent', b = BAND[cls];
-  const h = hashf(id), cy = C.h/2, hx = HEADX();
-  const dir = b.dir || (h % 2 ? 1 : -1);
-  const p = {id, n, cls, dir, jit: ((h >> 3) % 40) - 20,
-             vx: 0, vy: 0, touches: 0, burn: 0, last: -1e9, flash: 0,
-             verb: verb || 'execute', err: false, fade: 1, grow: 1};
-  // Two ways a thing can arrive. Something the agent MAKES is thrown out of the
-  // stream; something that was already out there and is only now reached for
-  // surfaces from the dark where it always was.
-  if ((VERB_DIR[verb] || 0) > 0){
-    p.x = hx; p.y = cy;
-    p.vx = -2.2 - (h % 5)*0.4; p.vy = dir*(3.2 + (h % 4)*0.5);
-    p.grow = 0.08;                       // small at the line, swells as it flies
-  } else {
-    p.x = hx - 30 - (h % 70); p.y = cy + dir*C.h*b.outer*(0.92 + (h%8)/50);
-    p.fade = 0;                          // out of the dark
-  }
-  return p;
+  const cls = CLASS[n.type] || 'agent';
+  const out = (VERB_DIR[verb] || 0) > 0;
+  return {id, n, cls, verb: verb || 'execute',
+          a: (SECTOR[cls].c)*Math.PI/180, r: out ? 6 : ROUT()*1.25,
+          x: C.w/2, y: C.h*0.46, touches: 0, burn: 0, last: -1e9, flash: 1,
+          err: false, fade: out ? 1 : 0, grow: out ? 0.08 : 1, seed: hashf(id)};
 }
 
 function feed(e){
@@ -513,13 +499,12 @@ function feed(e){
     let p = ENT.get(id);
     if (!p){ p = spawn(n, id, e.verb); ENT.set(id, p); }
     p.n = n; p.touches++; p.last = ref; p.flash = 1;
-    p.burn = (p.burn || 0) + (e.usd || 0)/Math.max(1, (e.nodes||[]).length);
     p.verb = e.verb || 'execute'; p.err = !!e.err; p.target = e.target;
+    p.burn = (p.burn || 0) + (e.usd || 0)/Math.max(1, (e.nodes||[]).length);
   }
 }
 
 function pump(ref){
-  // feed events as the head reaches them; a jump backwards rebuilds the field
   if (lastRefSeen != null && ref < lastRefSeen - 1){
     ENT.clear(); ptr = 0;
     while (ptr < EV.length && EV[ptr].ts < ref - 240) ptr++;
@@ -528,50 +513,79 @@ function pump(ref){
   while (ptr < EV.length && EV[ptr].ts <= ref){ feed(EV[ptr]); ptr++; }
 }
 
-function physics(ref){
-  const f = flowOf(ref);
-  const d = prevFlow == null ? 0 : Math.max(0, f - prevFlow);
-  prevFlow = f;
-  const cy = C.h/2, hx = HEADX(), arr = [...ENT.values()];
-  for (const p of arr){
-    p.x -= d * PXPS;                                  // scroll, roughly with time
-    const age = ref - p.last, hot = Math.exp(-Math.max(0, age)/HOT);
-    const b = BAND[p.cls];
-    const ty = cy + p.dir * C.h * (b.inner + (1-hot)*(b.outer-b.inner)) + p.jit*(1-hot);
-    p.vy += (ty - p.y) * 0.016;
-    if (hot > 0.1) p.vx += (hx - p.x) * 0.02 * hot;   // a fresh touch pulls it back
-    p.flash = Math.max(0, p.flash - 0.02);
-    p.fade += (1 - p.fade)*0.055;        // surfacing
-    p.grow += (1 - p.grow)*0.075;        // swelling
+// Each kind gets a slice of the circle in proportion to how much of it there
+// is, so twenty-five commands are not crushed into the same wedge as three
+// files. Newest sits in the middle of its slice; distance is recency.
+const CLS_ORDER = ['artifact', 'world', 'agent'];
+function arrange(ref){
+  const cx = C.w/2, cy = C.h*0.46, rin = RIN(), rout = ROUT();
+  const byCls = {artifact:[], agent:[], world:[]};
+  for (const p of ENT.values()) (byCls[p.cls] || byCls.agent).push(p);
+  // Distance is RANK, not seconds: the most recently worked-on thing holds the
+  // centre whether the session is live or was last touched a day ago. Absolute
+  // recency put everything at the rim on any historical session.
+  const ranked = [...ENT.values()].sort((x,y) => y.last - x.last);
+  const rank = new Map(ranked.map((p,i) => [p.id, i]));
+  const span = Math.max(1, ranked.length - 1);
+  const counts = CLS_ORDER.map(c => byCls[c].length);
+  const total = Math.max(1, counts.reduce((x,y)=>x+y,0));
+  const MIN = 34;                                   // degrees a non-empty kind always gets
+  let spare = 360 - CLS_ORDER.reduce((acc,c,i) => acc + (counts[i] ? MIN : 0), 0);
+  let cursor = -90;
+  for (let ci=0; ci<CLS_ORDER.length; ci++){
+    const cls = CLS_ORDER[ci], list = byCls[cls];
+    if (!list.length) continue;
+    const arc = MIN + spare * (list.length/total);
+    const mid = cursor + arc/2;
+    list.sort((x,y) => y.last - x.last);
+    const n = list.length;
+    list.forEach((p, i) => {
+      const t = n === 1 ? 0 : (i - (n-1)/2)/(n-1);
+      const ta = (mid + t*arc*0.92 + Math.sin(performance.now()/2600 + p.seed)*0.8) * Math.PI/180;
+      p.prox = 1 - (rank.get(p.id) || 0)/span;         // 1 = most current
+      // stagger neighbours in depth a little so a crowded slice does not stack
+      const stagger = ((i % 3) - 1) * (rout-rin) * 0.045;
+      const tr = Math.max(rin*0.8, rin + (1-p.prox)*(rout-rin) + stagger);
+      let da = ta - p.a;
+      while (da > Math.PI) da -= 2*Math.PI;
+      while (da < -Math.PI) da += 2*Math.PI;
+      p.a += da * 0.07;
+      p.r += (tr - p.r) * (p.r > tr ? 0.09 : 0.05);
+      p.fade += (1 - p.fade)*0.055;
+      p.grow += (1 - p.grow)*0.075;
+      p.flash = Math.max(0, p.flash - 0.02);
+      p.x = cx + Math.cos(p.a)*p.r;
+      p.y = cy + Math.sin(p.a)*p.r;
+      if (p.r > rout*1.3) ENT.delete(p.id);
+    });
   }
-  for (let i=0;i<arr.length;i++){                      // keep them from stacking
-    const a = arr[i];
-    for (let j=i+1;j<arr.length;j++){
-      const b2 = arr[j];
-      const dx = a.x-b2.x, dy = a.y-b2.y, d2 = dx*dx+dy*dy;
-      if (d2 > 9000 || d2 < 0.01) continue;
-      const k = (9000 - d2)/9000 * 0.62, dd = Math.sqrt(d2);
-      a.vx += dx/dd*k; a.vy += dy/dd*k; b2.vx -= dx/dd*k; b2.vy -= dy/dd*k;
+  // and finally push apart anything still overlapping, around the ring
+  const arr = [...ENT.values()];
+  for (let k=0;k<3;k++){
+    for (let i=0;i<arr.length;i++){
+      for (let j=i+1;j<arr.length;j++){
+        const A = arr[i], B = arr[j];
+        const dx = B.x-A.x, dy = B.y-A.y, dist = Math.hypot(dx,dy);
+        const want = (A.rad||14) + (B.rad||14) + 26;
+        if (dist >= want || dist < 0.01) continue;
+        const push = (want-dist)/want * 0.5;
+        const sign = (B.a > A.a) ? 1 : -1;
+        A.a -= sign*0.012*push; B.a += sign*0.012*push;
+        A.r -= push*1.4; B.r += push*1.4;
+        A.r = Math.max(rin*0.92, A.r); B.r = Math.max(rin*0.92, B.r);
+        A.x = cx + Math.cos(A.a)*A.r; A.y = cy + Math.sin(A.a)*A.r;
+        B.x = cx + Math.cos(B.a)*B.r; B.y = cy + Math.sin(B.a)*B.r;
+      }
     }
-  }
-  for (const p of arr){
-    p.vx *= 0.88; p.vy *= 0.88;
-    p.x += Math.max(-14, Math.min(14, p.vx));
-    p.y += Math.max(-14, Math.min(14, p.vy));
-    p.x = Math.min(p.x, hx - 14);                      // the future is empty
-    p.y = Math.max(34, Math.min(C.h - 104, p.y));      // clear of the furniture
-    if (p.x < -90) ENT.delete(p.id);                   // gone off the back
   }
 }
 
-// ---------------------------------------------------------------- stream ----
+// ---------------------------------------------------------------- field ----
 const cv = $('cv'), ctx = cv.getContext('2d');
 function fit(c){ const d=Math.min(2,devicePixelRatio||1), r=c.getBoundingClientRect();
   c.width=Math.max(1,r.width*d); c.height=Math.max(1,r.height*d); return {w:r.width,h:r.height,d}; }
 let C = fit(cv);
 addEventListener('resize', () => { C = fit(cv); drawMap(); });
-const HEADX = () => C.w*0.74;
-const xOf = (t, headF) => HEADX() - (headF - flowOf(t))*PXPS;
 
 const gk = $('glyphs'), gx = gk.getContext('2d');
 function drawGlyphKey(){
@@ -584,140 +598,116 @@ function drawGlyphKey(){
     glyph(gx, v, x, y, 5.4, '#b2c2d6', 1);
     gx.fillStyle = '#8296ae'; gx.fillText(v, x+11, y+0.5);
   });
-  const KIND = [['#c98500','artifacts · files, repos, commits'],
-                ['#3987e5','agent · commands, tools, skills'],
-                ['#d55181','world · searches, urls, repos']];
+  const KIND = [['#c98500','artifacts'],['#3987e5','agent'],['#d55181','world']];
   let kx = 10;
   KIND.forEach(([c,label]) => {
     gx.fillStyle = c; gx.beginPath(); gx.arc(kx+4, 11+2*23, 4.5, 0, 7); gx.fill();
     gx.fillStyle = '#b2c2d6'; gx.fillText(label, kx+13, 11+2*23+0.5);
-    kx += 13 + gx.measureText(label).width + 18;
+    kx += 13 + gx.measureText(label).width + 16;
   });
   gx.fillStyle = '#8296ae';
-  gx.fillText('size = tokens burned · nearer the line = touched more recently · ×n = times returned to',
-              10, 11 + 3*23);
+  gx.fillText('size = tokens burned · centre = what it is working on now · ×n = times returned to',
+              kx + 6, 11 + 2*23);
 }
 
 function drawStream(now){
   const {w,h,d} = C; ctx.setTransform(d,0,0,d,0,0); ctx.clearRect(0,0,w,h);
-  if (!snap || !times.length) return;
-  const ref = refTime(), headF = flowOf(ref), hx = HEADX(), cy = h/2;
+  if (!snap) return;
+  const ref = refTime(), cx = w/2, cy = h*0.46;
   pump(ref);
-  if (!frozen) physics(ref);
+  if (!frozen) arrange(ref);
   drawGlyphKey();
 
-  // the stream itself: cost per turn, flowing toward the head
-  const S = (snap.state.steps||[]).filter(s => s.ts && s.ts <= ref);
-  const inWin = S.filter(st => { const x = xOf(st.ts, headF); return x > -40 && x < w+40; });
-  const maxU = Math.max(1e-6, ...inWin.map(s => s.usd));
-  ctx.strokeStyle = 'rgba(57,135,229,.42)'; ctx.lineWidth = 1.4;
-  ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(Math.min(hx, w), cy); ctx.stroke();
-  ctx.beginPath();
-  let started = false;
-  for (const st of S){
-    const x = xOf(st.ts, headF);
-    if (x < -40 || x > w+40) continue;
-    const y = cy - Math.sqrt(st.usd/maxU)*(h*0.085);
-    started ? ctx.lineTo(x,y) : (ctx.moveTo(x,y), started = true);
-  }
-  if (started){
-    ctx.strokeStyle = 'rgba(122,180,250,.95)'; ctx.lineWidth = 2.2;
-    ctx.shadowColor = '#3987e5'; ctx.shadowBlur = 14; ctx.stroke(); ctx.shadowBlur = 0;
-  }
-  if (!reduce){                                   // current, moving with the flow
-    for (let i=0;i<34;i++){
-      const ph = ((now/7000)*PXPS + i/34) % 1, x = ph*hx;
-      ctx.fillStyle = `rgba(170,210,255,${0.10 + 0.4*Math.sin(ph*Math.PI)})`;
-      ctx.beginPath(); ctx.arc(x, cy, 1.9, 0, 7); ctx.fill();
-    }
+  // rings of forgetting: how far out a thing sits is how long since it was used
+  const rin = RIN(), rout = ROUT();
+  ctx.font = '11px ui-monospace,monospace'; ctx.textAlign = 'right';
+  for (const [frac, label] of [[0,'at work'],[0.5,'earlier'],[1,'done with']]){
+    const r = rin + frac*(rout-rin);
+    ctx.strokeStyle = 'rgba(57,135,229,.13)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.stroke();
+    ctx.fillStyle = 'rgba(130,150,174,.7)';
+    ctx.fillText(label, cx - r*0.93, cy + r*0.38);     // quiet left flank
   }
 
-  // links back to the stream, then the bodies
+  // links first, so the bodies sit on top of them
   const ents = [...ENT.values()].sort((a,b) => a.last - b.last);
   for (const p of ents){
-    const age = ref - p.last, hot = Math.exp(-Math.max(0,age)/HOT);
-    if (age > LINK && p.touches < 2) continue;
-    const col = COLOR[p.cls], a = (0.10 + 0.62*hot) * p.fade;
-    ctx.strokeStyle = hexA(col, a); ctx.lineWidth = 1 + 2.4*hot;
-    const anchor = Math.max(0, Math.min(hx, p.x));
-    ctx.beginPath(); ctx.moveTo(anchor, cy);
-    ctx.bezierCurveTo(anchor + (p.x-anchor)*0.35, cy + (p.y-cy)*0.1,
-                      p.x - (p.x-anchor)*0.25, cy + (p.y-cy)*0.75, p.x, p.y);
-    ctx.stroke();
-    if (p.flash > 0.02 && !reduce){               // a packet runs the link on contact
-      const t = 1 - p.flash, px2 = anchor + (p.x-anchor)*t, py2 = cy + (p.y-cy)*t;
+    const hot = p.prox != null ? p.prox : 1;
+    const col = COLOR[p.cls], a = (0.08 + 0.6*hot) * p.fade;
+    ctx.strokeStyle = hexA(col, a); ctx.lineWidth = 1 + 2.6*hot;
+    ctx.beginPath(); ctx.moveTo(cx + Math.cos(p.a)*rin*0.38, cy + Math.sin(p.a)*rin*0.38);
+    ctx.lineTo(p.x, p.y); ctx.stroke();
+    if (p.flash > 0.02 && !reduce){
+      const t = 1 - p.flash;
+      const px2 = cx + (p.x-cx)*t, py2 = cy + (p.y-cy)*t;
       ctx.fillStyle = hexA('#ffffff', p.flash*0.9);
       ctx.beginPath(); ctx.arc(px2, py2, 2.6 + p.flash*2.6, 0, 7); ctx.fill();
     }
   }
 
+  // the core: the agent itself
+  const st = snap.state, busy = (st.inflight||[]).length > 0 && mode === 'live';
+  const beat = reduce ? 0 : (Math.sin(now/300)+1)/2;
+  ctx.strokeStyle = hexA('#3987e5', .55); ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(cx, cy, rin*0.38, 0, 7); ctx.stroke();
+  ctx.fillStyle = `rgba(242,246,251,${busy ? .55+.45*beat : .35})`;
+  ctx.shadowColor = '#7ab4fa'; ctx.shadowBlur = busy ? 16+beat*18 : 10;
+  ctx.beginPath(); ctx.arc(cx, cy, 7 + (busy?beat*2.5:0), 0, 7); ctx.fill(); ctx.shadowBlur = 0;
+
+  const running = new Set();
+  if (mode === 'live') for (const i of (st.inflight||[])) for (const id of (i.nodes||[])) running.add(id);
+
   const boxes = [];
   const maxBurn = Math.max(1e-4, ...ents.map(p => p.burn || 0));
-  const running = new Set();
-  if (mode === 'live' && snap)
-    for (const i of (snap.state.inflight || [])) for (const id of (i.nodes || [])) running.add(id);
   for (const p of ents){
-    const age = ref - p.last, hot = Math.exp(-Math.max(0,age)/HOT);
+    const hot = p.prox != null ? p.prox : 1;
     const col = COLOR[p.cls];
-    // a body grows with what it has cost: burn is the weight, touches the count
-    const r = 7 + 23*Math.sqrt((p.burn || 0)/maxBurn);
-    const alpha = (0.55 + 0.45*hot) * p.fade;     // never fades into the background
-    // a call running on this body right now: a visible pulse. Everything else
-    // recently touched just breathes a little, so the field is never dead still.
+    const base = 7 + 22*Math.sqrt((p.burn || 0)/maxBurn);
     const act = running.has(p.id) || p.flash > 0.25;
-    const beat = act ? (Math.sin(now/170 + p.jit)+1)/2 : 0;
-    const breathe = reduce ? 0 : Math.sin(now/560 + p.jit)*0.03*hot;
-    const rr = r * (0.3 + 0.7*p.grow) * (1 + breathe + (reduce ? 0 : beat*0.17));
+    const bb = act && !reduce ? (Math.sin(now/170 + p.seed)+1)/2 : 0;
+    const breathe = reduce ? 0 : Math.sin(now/560 + p.seed)*0.03*hot;
+    const r = base * (0.3 + 0.7*p.grow) * (1 + breathe + bb*0.17);
+    p.rad = r;                                   // separation needs to know the size
+    const alpha = (0.55 + 0.45*hot) * p.fade;
     ctx.save(); ctx.globalAlpha = alpha;
-    if (act && !reduce){                          // halo of a call in progress
-      ctx.strokeStyle = hexA(col, 0.5*(1-beat));
-      ctx.lineWidth = 1.6;
-      ctx.beginPath(); ctx.arc(p.x, p.y, rr + 5 + beat*13, 0, 7); ctx.stroke();
+    if (act && !reduce){
+      ctx.strokeStyle = hexA(col, 0.5*(1-bb)); ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r + 5 + bb*13, 0, 7); ctx.stroke();
     }
-    ctx.shadowColor = col; ctx.shadowBlur = 8 + hot*20 + beat*18;
+    ctx.shadowColor = col; ctx.shadowBlur = 8 + hot*20 + bb*18;
     ctx.fillStyle = hexA(col, 0.20 + 0.25*hot);
-    ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.fill();
     ctx.shadowBlur = 0;
     ctx.strokeStyle = hexA(col, 0.85); ctx.lineWidth = 1.8;
-    ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, 7); ctx.stroke();
-    glyph(ctx, p.verb, p.x, p.y, 5.6*Math.min(1,p.grow*1.6), p.flash > 0.3 ? '#ffffff' : col, 1);
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.stroke();
+    glyph(ctx, p.verb, p.x, p.y, 5.6*Math.min(1, p.grow*1.6), p.flash > 0.3 ? '#ffffff' : col, 1);
     if (p.err){
       ctx.strokeStyle = '#e66767'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(p.x, p.y, rr + 4, 0, 7); ctx.stroke();
+      ctx.beginPath(); ctx.arc(p.x, p.y, r + 4, 0, 7); ctx.stroke();
     }
-    if (p.touches > 1){                           // how many times we came back
+    if (p.touches > 1){
       ctx.fillStyle = hexA(col, .95); ctx.font = 'bold 11px ui-monospace,monospace';
-      ctx.textAlign = 'center'; ctx.fillText('×'+p.touches, p.x, p.y + rr + 14);
+      ctx.textAlign = 'center'; ctx.fillText('×'+p.touches, p.x, p.y + r + 14);
     }
     ctx.restore();
 
     const txt = String(p.n.label).slice(0,30);
-    ctx.font = '13px ui-monospace,monospace'; ctx.textAlign = 'left';
-    const tw = ctx.measureText(txt).width, lx = p.x + rr + 9, ly = p.y + 4;
-    const box = [lx-12, ly-13, lx+tw+2, ly+5];
+    ctx.font = '13px ui-monospace,monospace';
+    const right = p.x >= cx;
+    ctx.textAlign = right ? 'left' : 'right';
+    const tw = ctx.measureText(txt).width;
+    const lx = right ? p.x + r + 10 : p.x - r - 10, ly = p.y + 4;
+    const box = right ? [lx-14, ly-13, lx+tw+2, ly+5] : [lx-tw-2, ly-13, lx+14, ly+5];
     const clash = boxes.some(b2 => !(box[2]<b2[0]||box[0]>b2[2]||box[3]<b2[1]||box[1]>b2[3]));
-    if (!clash && lx < w - 40){
+    if (!clash){
       boxes.push(box);
       ctx.fillStyle = 'rgba(8,13,24,.82)';
       ctx.fillRect(box[0], box[1], box[2]-box[0]+4, box[3]-box[1]);
-      kindIcon(ctx, p.n.type, lx-5, ly-4, 5, col, 0.6+0.4*hot);
+      kindIcon(ctx, p.n.type, right ? lx-6 : lx+6, ly-4, 5, col, 0.6+0.4*hot);
       ctx.fillStyle = hexA(hot > .3 ? '#f2f6fb' : '#b2c2d6', 1);
-      ctx.fillText(txt, lx+6, ly);
+      ctx.fillText(txt, right ? lx+5 : lx-5, ly);
     }
   }
-
-  // now
-  const g = ctx.createLinearGradient(hx-44,0,hx,0);
-  g.addColorStop(0,'rgba(242,246,251,0)'); g.addColorStop(1,'rgba(242,246,251,.10)');
-  ctx.fillStyle = g; ctx.fillRect(hx-44, 10, 44, h-30);
-  ctx.strokeStyle = 'rgba(242,246,251,.85)'; ctx.lineWidth = 1.6;
-  ctx.beginPath(); ctx.moveTo(hx,12); ctx.lineTo(hx,h-18); ctx.stroke();
-  const pulse = reduce ? 0 : (Math.sin(now/260)+1)/2;
-  ctx.fillStyle = `rgba(242,246,251,${.72+.28*pulse})`;
-  ctx.shadowColor = '#ffffff'; ctx.shadowBlur = 14+pulse*12;
-  ctx.beginPath(); ctx.arc(hx, cy, 5+pulse*1.8, 0, 7); ctx.fill(); ctx.shadowBlur = 0;
-  ctx.textAlign = 'right'; ctx.font = '11px ui-monospace,monospace'; ctx.fillStyle = '#b2c2d6';
-  ctx.fillText(mode === 'live' ? 'now' : clock(ref), hx-8, 23);
 }
 
 // ---------------------------------------------------------------- input ----
@@ -731,7 +721,7 @@ addEventListener('mouseup', () => drag = null);
 addEventListener('mousemove', ev => {
   if (!drag) return;
   mode = 'scrub';
-  const f = flowOf(drag.t) - (ev.clientX - drag.x)/PXPS;
+  const f = flowOf(drag.t) - (ev.clientX - drag.x)/6;
   let lo=0, hi=flows.length-1;
   while (lo<hi){ const m=(lo+hi+1)>>1; flows[m]<=f ? lo=m : hi=m-1; }
   cursor = Math.min(snap.state.t_end, times[lo] + (f - flows[lo]));
@@ -759,16 +749,16 @@ cv.addEventListener('mousemove', ev => {
   tip.style.top = Math.min(innerHeight-130, ev.clientY+14)+'px';
 });
 cv.addEventListener('mouseleave', () => { hover = null; $('tip').style.display = 'none'; });
-cv.addEventListener('wheel', ev => {           // how fast the field scrolls
+cv.addEventListener('wheel', ev => {           // spread the field out, or draw it in
   ev.preventDefault();
-  PXPS = Math.max(0.6, Math.min(26, PXPS*(ev.deltaY<0 ? 1.12 : 1/1.12)));
+  ZOOM = Math.max(0.45, Math.min(2.2, ZOOM*(ev.deltaY<0 ? 1.09 : 1/1.09)));
 }, {passive:false});
 addEventListener('keydown', ev => {
   const k = ev.key.toLowerCase();
   if (k===' '){ frozen = !frozen; ev.preventDefault(); }
   if (k==='t') showTable();
   if (k==='s') showPicker();
-  if (k==='r'){ ENT.clear(); ptr = 0; prevFlow = null; mode==='live' ? startReplay() : goLive(); }
+  if (k==='r'){ ENT.clear(); ptr = 0; mode==='live' ? startReplay() : goLive(); }
   if (k==='escape' || k==='enter') goLive();
   if (k==='[' && mode==='replay') rate *= 0.6;
   if (k===']' && mode==='replay') rate *= 1.6;
@@ -808,7 +798,7 @@ mcv.addEventListener('click', ev => {
   let lo=0, hi=flows.length-1;
   while (lo<hi){ const m=(lo+hi+1)>>1; flows[m]<=f ? lo=m : hi=m-1; }
   mode = 'scrub'; cursor = times[lo];
-  ENT.clear(); ptr = 0; prevFlow = null;
+  ENT.clear(); ptr = 0;
   $('mode').textContent='scrub'; $('mode').style.color='var(--c-artifact)'; paintChrome();
 });
 
@@ -843,7 +833,7 @@ async function showPicker(force){
     $('picklist').innerHTML = '<div class="sub">attaching…</div>';
     try { await fetch('/select?file=' + encodeURIComponent(f)); } catch(e){}
     $('picker').style.display = 'none';
-    snap = null; booted = false; EV = []; ENT.clear(); ptr = 0; prevFlow = null; seenEv = new Set();
+    snap = null; booted = false; EV = []; ENT.clear(); ptr = 0; seenEv = new Set();
   }));
 }
 
