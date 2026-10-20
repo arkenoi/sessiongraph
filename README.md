@@ -29,9 +29,43 @@ writes to `~/.claude`.
 | session | where the transcript lives | what to do |
 |---|---|---|
 | Claude Code CLI, local | `~/.claude/projects/` on that machine | `python3 server.py` — nothing to attach |
-| **Remote Control (RC)** | **the same: RC runs Claude Code on your own computer**, the cloud side is only a control channel | run it on that computer |
+| **Remote Control (RC)** | on the computer the RC bridge points at — Claude Code runs there, the cloud side is only a control channel | run it there, or watch from your laptop with `--remote` |
 | Claude Code on the web / cloud | inside the session container | see *Cloud sessions* below |
 | claude.ai chat (not Code) | nowhere on disk | not supported |
+
+## Watching a machine you are not sitting at
+
+This is the usual case for RC: the session runs on a box somewhere, you want to
+watch it from your laptop. Point the HUD at that machine:
+
+```sh
+python3 server.py --remote 'ssh build-box'
+open http://127.0.0.1:8777/
+```
+
+It lists the transcripts over there, attaches to the newest, and streams it live
+(`tail -n +1 -F` over your own ssh). Press `S` to see the other sessions on that
+host and click to switch — same picker, remote list. If the connection drops it
+reconnects and rebuilds.
+
+`--remote` takes any command prefix with ssh's argument semantics, so
+`--remote 'ssh -p 2222 me@host'` or a wrapper script both work;
+`--remote-root` if transcripts live somewhere other than `~/.claude/projects`.
+
+**Credentials stay yours.** The prefix is run as you typed it, so keys, agent
+forwarding and host config are whatever your ssh already does. Nothing is stored
+and nothing is read from the environment.
+
+The alternative, if you would rather not stream: run the HUD *on* that box and
+forward the port.
+
+```sh
+ssh -L 8777:127.0.0.1:8777 you@build-box     # then open http://127.0.0.1:8777/
+```
+
+Either way the HUD reads only the disk of whatever machine it can reach. It
+cannot see a session whose transcript is not on a disk it can read — a cloud
+session's transcript lives inside its container (see *Cloud sessions*).
 
 ### Picking one
 
@@ -57,12 +91,6 @@ python3 server.py --file ~/.claude/projects/<project>/<uuid>.jsonl --no-follow
 Under the hood that is `GET /sessions` and `GET /select?file=…`, and `/select`
 only accepts paths it just listed under `--root`, so the endpoint can't be talked
 into reading arbitrary files.
-
-If the machine running RC is headless, forward the port and watch from your laptop:
-
-```sh
-ssh -L 8777:127.0.0.1:8777 you@that-box      # then open http://127.0.0.1:8777/
-```
 
 Useful flags: `--root /path/to/projects` for a non-default location,
 `--file <session>.jsonl` plus `--no-follow` to pin one session, `--port`.

@@ -41,16 +41,12 @@ def target_of(tool, inp):
     return ""
 
 
-def session_meta(path, limit=24000):
-    """Cheap description of a transcript: first prompt, cwd, branch, size, mtime."""
-    try:
-        st = os.stat(path)
-    except OSError:
-        return None
+def parse_meta(text):
+    """First prompt, cwd, branch and turn count from the head of a transcript."""
     title, cwd, branch, turns = None, None, None, 0
-    try:
-        with open(path, "r", errors="replace") as fh:
-            for line in fh.read(limit).split("\n"):
+    if True:
+        if True:
+            for line in text.split("\n"):
                 if not line.strip():
                     continue
                 try:
@@ -68,21 +64,78 @@ def session_meta(path, limit=24000):
                     txt = " ".join(txt.split())
                     if txt:
                         title = txt[:90]
+    return {"title": title or "(no prompt yet)", "cwd": cwd, "branch": branch,
+            "turns_seen": turns}
+
+
+def session_meta(path, limit=24000):
+    try:
+        st = os.stat(path)
+        with open(path, "r", errors="replace") as fh:
+            m = parse_meta(fh.read(limit))
     except OSError:
         return None
-    return {"file": path, "name": os.path.basename(path)[:8],
-            "title": title or "(no prompt yet)", "cwd": cwd, "branch": branch,
-            "turns_seen": turns, "size": st.st_size, "mtime": st.st_mtime}
+    m.update({"file": path, "name": os.path.basename(path)[:8],
+              "size": st.st_size, "mtime": st.st_mtime})
+    return m
+
+
+def sh(cmd, timeout=25):
+    import subprocess
+    try:
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        return r.stdout, r.stderr
+    except Exception as e:
+        return "", str(e)
+
+
+class Remote:
+    """Another computer, reached by a command prefix you supply (e.g. "ssh box").
+
+    Only that prefix is ours to run; credentials, keys and agent forwarding are
+    whatever your own ssh config already does. Nothing is stored here.
+    """
+
+    def __init__(self, prefix, root="~/.claude/projects"):
+        self.prefix, self.root = prefix, root
+        self.listed = []
+
+    def list(self, n=24):
+        out, err = sh(f"{self.prefix} 'ls -t {self.root}/*/*.jsonl 2>/dev/null | head -{n}'")
+        paths = [l.strip() for l in out.split("\n") if l.strip().endswith(".jsonl")]
+        if not paths:
+            return [], (err.strip()[:200] or "no transcripts found on the remote host")
+        quoted = " ".join("'" + p.replace("'", "'\\''") + "'" for p in paths)
+        heads, _ = sh(f"{self.prefix} 'for f in {quoted}; do echo \"<<<F $f\"; "
+                      f"head -c 2500 \"$f\"; echo; done'", timeout=45)
+        blobs = {}
+        for chunk in heads.split("<<<F ")[1:]:
+            nl = chunk.find("\n")
+            blobs[chunk[:nl].strip()] = chunk[nl+1:]
+        items = []
+        for rank, pth in enumerate(paths):
+            m = parse_meta(blobs.get(pth, ""))
+            m.update({"file": pth, "name": os.path.basename(pth)[:8],
+                      "rank": rank, "size": None, "mtime": None, "remote": True})
+            items.append(m)
+        self.listed = [i["file"] for i in items]
+        return items, None
+
+    def stream_cmd(self, path):
+        return f"{self.prefix} tail -n +1 -F '" + path.replace("'", "'\\''") + "'"
 
 
 class Tailer:
     """One session file -> one incrementally-built graph."""
 
     def __init__(self, path, root=None, follow_newest=True, attribution="caused",
-                 events_cmd=None):
+                 events_cmd=None, remote=None):
         self.root, self.follow = root, follow_newest
         self.events_cmd = events_cmd
         self.cmd_sig = None
+        self.remote = remote
+        self.proc = None
+        self.stream_path = None
         self.lock = threading.Lock()
         self.subs = []
         self.set_path(path)
@@ -126,6 +179,14 @@ class Tailer:
                                    "text": n["attrs"].get("text_preview")})
 
     def poll(self):
+        if self.remote:
+            if self.proc and self.proc.poll() is not None:   # ssh dropped
+                print("remote stream ended; retrying", file=sys.stderr)
+                time.sleep(3)
+                if self.stream_path:
+                    self.start_stream(self.stream_path)
+                    return True
+            return False
         if self.events_cmd:                       # remote: whatever you give us
             return self._poll_cmd()
         if self.follow:
@@ -152,6 +213,39 @@ class Tailer:
                 if ln.strip():
                     self._ingest_line(ln.decode("utf-8", "replace"))
         return True
+
+    def start_stream(self, path):
+        """Follow an append-only transcript on another machine, live."""
+        import subprocess, threading as th
+        self.stop_stream()
+        with self.lock:
+            self.set_path(path)
+        self.stream_path = path
+        cmd = self.remote.stream_cmd(path)
+        self.proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE,
+                                     stderr=subprocess.DEVNULL, text=True, bufsize=1)
+        def pump(proc):
+            n = 0
+            for line in proc.stdout:
+                if proc is not self.proc:
+                    return                       # superseded by another selection
+                if line.strip():
+                    with self.lock:
+                        self._ingest_line(line)
+                    n += 1
+                    if n % 12 == 0:
+                        self.broadcast()
+            self.broadcast()
+        th.Thread(target=pump, args=(self.proc,), daemon=True).start()
+        return True
+
+    def stop_stream(self):
+        if self.proc:
+            try:
+                self.proc.kill()
+            except Exception:
+                pass
+            self.proc = None
 
     def _poll_cmd(self):
         """Run the user's own command and rebuild from whatever it prints.
@@ -294,6 +388,14 @@ def make_handler(tailer):
                 except OSError:
                     return self._send("hud.html missing next to server.py", code=500)
             if p == "/sessions":
+                if tailer.remote:
+                    items, err = tailer.remote.list()
+                    for i in items:
+                        i["active"] = (i["file"] == tailer.stream_path)
+                    return self._send(json.dumps({"sessions": items, "follow": False,
+                                                  "remote": tailer.remote.prefix,
+                                                  "error": err, "current": tailer.stream_path}),
+                                      "application/json")
                 items = [session_meta(f) for f in find_sessions(tailer.root)[:60]]
                 items = [i for i in items if i]
                 for i in items:
@@ -310,6 +412,12 @@ def make_handler(tailer):
                     tailer.follow = True
                     tailer.poll(); tailer.broadcast()
                     return self._send(json.dumps({"ok": True, "follow": True}), "application/json")
+                if tailer.remote:
+                    if want not in tailer.remote.listed:
+                        return self._send(json.dumps({"ok": False, "error": "unknown session"}),
+                                          "application/json", code=400)
+                    tailer.start_stream(want)
+                    return self._send(json.dumps({"ok": True, "file": want}), "application/json")
                 known = set(find_sessions(tailer.root))     # only files we listed
                 if want not in known:
                     return self._send(json.dumps({"ok": False, "error": "unknown session"}),
@@ -354,6 +462,12 @@ def main():
     ap.add_argument("--root", help="override ~/.claude/projects")
     ap.add_argument("--port", type=int, default=8777)
     ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--remote", metavar="CMD",
+                    help="watch sessions on another machine, e.g. --remote 'ssh box'. "
+                         "Lists transcripts there and streams the one you pick. Your own "
+                         "ssh config supplies the credentials; none are stored here.")
+    ap.add_argument("--remote-root", default="~/.claude/projects",
+                    help="transcript directory on the remote machine")
     ap.add_argument("--events-cmd", help="shell command that prints a session's events "
                                         "(JSON array or JSONL); re-run every --interval "
                                         "seconds. It carries its own credentials.")
@@ -362,15 +476,23 @@ def main():
                     help="stay on one file instead of jumping to the newest session")
     a = ap.parse_args()
     path = a.file or (find_sessions(a.root) or [None])[0]
-    if not path and not a.events_cmd:
+    if not path and not a.events_cmd and not a.remote:
         sys.exit("no transcripts found under %s" % (a.root or "~/.claude/projects"))
+    remote = Remote(a.remote, a.remote_root) if a.remote else None
     t = Tailer(path or "", root=a.root,
-               follow_newest=not (a.no_follow or a.file or a.events_cmd),
-               events_cmd=a.events_cmd)
+               follow_newest=not (a.no_follow or a.file or a.events_cmd or remote),
+               events_cmd=a.events_cmd, remote=remote)
+    if remote:                                   # attach to the newest one over there
+        items, err = remote.list()
+        if err:
+            sys.exit("remote: " + err)
+        t.start_stream(items[0]["file"])
+        print(f"remote  {a.remote}  {len(items)} session(s); attached to {items[0]['name']}")
     threading.Thread(target=t.run, kwargs={"interval": max(0.2, a.interval)},
                      daemon=True).start()
     srv = ThreadingHTTPServer((a.host, a.port), make_handler(t))
-    src = ("events-cmd: " + a.events_cmd[:60]) if a.events_cmd else \
+    src = ("remote: " + a.remote) if a.remote else \
+          ("events-cmd: " + a.events_cmd[:60]) if a.events_cmd else \
           ("tailing " + os.path.basename(path)) if path else "waiting for a session"
     print(f"HUD  http://{a.host}:{a.port}/   {src}")
     try:
