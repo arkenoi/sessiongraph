@@ -6,9 +6,9 @@
 <title>Session HUD</title>
 <style>
   :root{
-    --surface-0:#070b14; --surface-1:#0b1220; --surface-2:#101a2c;
-    --line:rgba(57,135,229,.20); --line-hot:rgba(57,135,229,.55);
-    --ink:#e6edf6; --ink-2:#93a4bd; --ink-3:#64748b;
+    --surface-0:#070b14; --surface-1:#0d1526; --surface-2:#16233a;
+    --line:rgba(57,135,229,.32); --line-hot:rgba(57,135,229,.7);
+    --ink:#f2f6fb; --ink-2:#b2c2d6; --ink-3:#8296ae;
     /* categorical: validated all-pairs on this surface (worst CVD dE 13.2) */
     --c-agent:#3987e5; --c-artifact:#c98500; --c-world:#d55181;
     --neutral:#5f7391; --bad:#e66767; --good:#199e70;
@@ -18,18 +18,18 @@
   html,body{height:100%}
   body{
     margin:0; background:var(--surface-0); color:var(--ink); font-family:var(--mono);
-    font-size:13px; overflow:hidden;
+    font-size:14px; overflow:hidden;
     background-image:radial-gradient(ellipse at 50% -20%,rgba(57,135,229,.10),transparent 60%);
   }
   body::after{
     content:""; position:fixed; inset:0; pointer-events:none; z-index:50;
-    background:repeating-linear-gradient(0deg,rgba(255,255,255,.015) 0 1px,transparent 1px 3px);
+    background:repeating-linear-gradient(0deg,rgba(255,255,255,.008) 0 1px,transparent 1px 4px);
     mix-blend-mode:screen;
   }
   .grid{
     display:grid; height:100%; gap:10px; padding:10px;
-    grid-template-columns:232px minmax(0,1fr) 288px;
-    grid-template-rows:auto minmax(0,1fr) 112px;
+    grid-template-columns:250px minmax(0,1fr) 320px;
+    grid-template-rows:auto minmax(0,1fr) 124px;
     grid-template-areas:"now now now" "tiles stream feed" "map map map";
   }
   .panel{
@@ -43,7 +43,7 @@
   .panel::before{top:-1px;left:-1px;border-right:0;border-bottom:0}
   .panel::after{bottom:-1px;right:-1px;border-left:0;border-top:0}
   .cap{
-    font-size:9.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-3);
+    font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3);
     padding:7px 10px 0; display:flex; justify-content:space-between; align-items:baseline;
   }
 
@@ -52,41 +52,41 @@
   #dot.on{background:var(--good);box-shadow:0 0 0 0 rgba(25,158,112,.7);animation:pulse 1.6s infinite}
   #dot.wait{background:var(--c-artifact)} #dot.off{background:var(--ink-3)}
   @keyframes pulse{to{box-shadow:0 0 0 13px rgba(25,158,112,0)}}
-  #status{font-size:20px;letter-spacing:.09em;text-transform:uppercase;white-space:nowrap}
+  #status{font-size:23px;letter-spacing:.09em;text-transform:uppercase;white-space:nowrap}
   #ekg{width:150px;height:28px;flex:none}
-  #doing{flex:1 1 auto;min-width:0;color:var(--ink-2);font-size:14px;
+  #doing{flex:1 1 auto;min-width:0;color:var(--ink-2);font-size:16px;
          overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #doing b{color:var(--ink);font-weight:600}
-  #elapsed{font-size:20px;color:var(--ink);font-variant-numeric:tabular-nums}
-  .meta{font-size:10.5px;color:var(--ink-3);text-align:right;line-height:1.45;white-space:nowrap}
+  #elapsed{font-size:23px;color:var(--ink);font-variant-numeric:tabular-nums}
+  .meta{font-size:12px;color:var(--ink-3);text-align:right;line-height:1.45;white-space:nowrap}
 
   #tiles{grid-area:tiles; display:grid; grid-template-columns:1fr 1fr; gap:10px; align-content:start; overflow:auto}
   .tile{padding:9px 10px 11px}
-  .tile .k{font-size:9px;letter-spacing:.14em;color:var(--ink-3);text-transform:uppercase}
-  .tile .v{font-size:23px;line-height:1.15;margin-top:5px;font-variant-numeric:tabular-nums}
-  .tile .s{font-size:10px;color:var(--ink-3);margin-top:2px}
-  .tile.hero{grid-column:1/-1} .tile.hero .v{font-size:34px}
+  .tile .k{font-size:10.5px;letter-spacing:.12em;color:var(--ink-3);text-transform:uppercase}
+  .tile .v{font-size:26px;line-height:1.15;margin-top:5px;font-variant-numeric:tabular-nums}
+  .tile .s{font-size:11.5px;color:var(--ink-3);margin-top:2px}
+  .tile.hero{grid-column:1/-1} .tile.hero .v{font-size:38px}
 
   #streamwrap{grid-area:stream; overflow:hidden}
   #cv{display:block;width:100%;height:100%;cursor:ew-resize}
-  #bands{position:absolute;left:7px;top:7px;display:flex;flex-direction:column;gap:2px;
-         font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3);pointer-events:none}
-  #bands i{display:inline-block;width:7px;height:7px;margin-right:5px;vertical-align:-1px}
+  #bands{position:absolute;right:12px;top:9px;text-align:right;display:flex;flex-direction:column;gap:3px;
+         font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);pointer-events:none}
+  #bands i{display:inline-block;width:9px;height:9px;margin-right:6px;vertical-align:-1px}
   .sw-agent{background:var(--c-agent);border-radius:50%}
   .sw-art{background:var(--c-artifact);transform:rotate(45deg)}
   .sw-world{background:var(--c-world);clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
-  #hint{position:absolute;right:9px;bottom:6px;font-size:9px;color:var(--ink-3)}
-  #glyphs{position:absolute;left:7px;bottom:20px;width:490px;height:43px;pointer-events:none;opacity:.92}
-  #mode{position:absolute;left:9px;bottom:6px;font-size:9px;letter-spacing:.14em;
+  #hint{position:absolute;right:10px;bottom:7px;font-size:10.5px;color:var(--ink-3)}
+  #glyphs{position:absolute;left:10px;bottom:24px;width:740px;height:66px;pointer-events:none;opacity:.92}
+  #mode{position:absolute;left:10px;bottom:7px;font-size:11px;letter-spacing:.14em;
         text-transform:uppercase;color:var(--c-agent)}
 
   #feed{grid-area:feed; display:flex; flex-direction:column}
   #feedlist{overflow:auto;padding:4px 0 8px}
   .ev{display:flex;gap:8px;padding:3px 10px;align-items:baseline;border-left:2px solid transparent}
-  .ev .t{font-size:9.5px;color:var(--ink-3);width:46px;flex:none;font-variant-numeric:tabular-nums}
-  .ev .n{font-size:11.5px;flex:none}
-  .ev .g{font-size:11px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .ev .b{font-size:9.5px;color:var(--ink-3);margin-left:auto;flex:none}
+  .ev .t{font-size:11px;color:var(--ink-3);width:54px;flex:none;font-variant-numeric:tabular-nums}
+  .ev .n{font-size:13px;flex:none}
+  .ev .g{font-size:12.5px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ev .b{font-size:11px;color:var(--ink-3);margin-left:auto;flex:none}
   .ev.err{border-left-color:var(--bad)} .ev.err .n{color:var(--bad)}
   .ev.fresh{animation:flash 2.4s ease-out}
   @keyframes flash{0%{background:rgba(57,135,229,.42);border-left-color:var(--c-agent)}
@@ -95,9 +95,9 @@
   #map{grid-area:map}
   #mcv{display:block;width:100%;height:calc(100% - 22px);cursor:pointer}
 
-  #tip{position:fixed;z-index:60;pointer-events:none;display:none;max-width:320px;
+  #tip{position:fixed;z-index:60;pointer-events:none;display:none;max-width:380px;
        background:#050810;border:1px solid var(--line-hot);border-radius:2px;
-       padding:6px 8px;font-size:11px;line-height:1.5;box-shadow:0 6px 24px rgba(0,0,0,.6)}
+       padding:9px 11px;font-size:13px;line-height:1.55;box-shadow:0 6px 24px rgba(0,0,0,.6)}
   #tip .h{color:var(--ink);font-weight:600} #tip .r{color:var(--ink-2)}
   #picker{position:fixed;inset:60px 10% 60px 10%;z-index:72;display:none;overflow:auto;
           background:#050810;border:1px solid var(--line-hot);padding:16px}
@@ -154,12 +154,7 @@
 
   <div class="panel" id="streamwrap">
     <canvas id="cv"></canvas>
-    <div id="bands">
-      <span><i class="sw-art"></i>artifacts · files, repos, commits</span>
-      <span><i class="sw-agent"></i>agent · commands, tools, skills</span>
-      <span><i class="sw-world"></i>world · searches, urls, repos</span>
-    </div>
-    <canvas id="glyphs" width="980" height="86"></canvas>
+        <canvas id="glyphs" width="1480" height="132"></canvas>
     <div id="mode">live</div>
     <div id="hint">drag scrub · wheel zoom · S sessions · R replay · T table · space freeze</div>
   </div>
@@ -235,73 +230,6 @@ function flowOf(t){
   return flows[lo] + Math.min(t - times[lo], GAPC);
 }
 
-// ---- channels: an entity holds a row until it goes quiet, then the row is reused ----
-let band = {};
-function layout(){
-  const span = C.w/px, maxRows = Math.max(2, Math.floor(C.h/11));
-  const B = {artifact:{rows:[]}, agent:{rows:[]}, world:{rows:[]}};
-  const owner = new Map();
-  for (const e of EV){
-    e.rows = [];
-    const ef = flowOf(e.ts);
-    for (const id of (e.nodes||[])){
-      const n = NODE.get(id); if (!n) continue;
-      const cls = CLASS[n.type] || 'agent', b = B[cls];
-      let slot = owner.get(id);
-      if (!slot || slot.cls !== cls){
-        let idx = b.rows.findIndex(r => !r.id || (ef - r.f) > span*1.35);
-        if (idx < 0){
-          if (b.rows.length < maxRows){ b.rows.push({}); idx = b.rows.length-1; }
-          else { idx = 0; for (let i=1;i<b.rows.length;i++) if (b.rows[i].f < b.rows[idx].f) idx = i; }
-        }
-        if (b.rows[idx].id) owner.delete(b.rows[idx].id);
-        b.rows[idx] = {id, f:ef};
-        slot = {cls, row:idx}; owner.set(id, slot);
-      }
-      b.rows[slot.row].f = ef;
-      e.rows.push({id, cls, row:slot.row});
-    }
-  }
-  geometry(B);
-}
-// Lanes are allocated only to channels with traffic in view, packed tight and
-// animated, so a quiet band closes up instead of reserving dead space.
-function geometry(B){ band = B; band.spineY = band.spineY || C.h*0.6; }
-const rowY = new Map();                 // "cls:row" -> current y (lerped)
-function reflow(ref, headF, w){
-  const act = {artifact:[], agent:[], world:[]};
-  const seen = {artifact:new Set(), agent:new Set(), world:new Set()};
-  for (const e of EV){
-    if (e.ts > ref) continue;
-    const x = xOf(e.ts, headF);
-    if (x < -40 || x > w+40) continue;
-    for (const r of (e.rows||[])) if (!seen[r.cls].has(r.row)){ seen[r.cls].add(r.row); act[r.cls].push(r.row); }
-  }
-  for (const k in act) act[k].sort((a,b)=>a-b);
-  const nA = act.artifact.length, nB = act.agent.length, nW = act.world.length;
-  const total = Math.max(1, nA+nB+nW);
-  const avail = C.h - 48 - 36;
-  const rh = Math.max(9, Math.min(22, avail/total));
-  const blockH = total*rh + 36;
-  const top = Math.max(26, (C.h - blockH)/2);
-  const spineY = top + (nA+nB)*rh + 18;
-  const y0 = {artifact: top, agent: top + nA*rh, world: spineY + 18};
-  const pack = {};
-  for (const cls in act){
-    pack[cls] = new Map();
-    act[cls].forEach((row,i) => pack[cls].set(row, y0[cls] + i*rh + rh/2));
-  }
-  // ease every lane toward its new home
-  for (const cls in pack) for (const [row,y] of pack[cls]){
-    const k = cls+':'+row, cur = rowY.get(k);
-    rowY.set(k, cur == null ? y : cur + (y-cur)*0.14);
-  }
-  band.spineY += (spineY - band.spineY)*0.14;
-  band.rh = rh;
-  return pack;
-}
-const bandY = (cls,row) => rowY.get(cls+':'+row) ?? (band.spineY||0);
-
 // ---------------------------------------------------------------- feed in ----
 const es = new EventSource('/stream');
 es.onmessage = e => { try { apply(JSON.parse(e.data)); } catch(err){ console.error(err); } };
@@ -311,8 +239,8 @@ function apply(s){
   const first = !snap;
   snap = s; skew = s.state.now - Date.now()/1000;
   NODE = new Map(s.nodes.map(n => [n.id, n]));
-  EV = (s.state.events||[]).filter(e => e.ts);
-  buildFlow(s); layout();
+  EV = (s.state.events||[]).filter(e => e.ts).sort((x,y) => x.ts - y.ts);
+  buildFlow(s);
   if (first && !booted){
     booted = true;
     const span = (s.state.t_end||0) - (s.state.t_start||0);
@@ -448,86 +376,81 @@ function drawEkg(){
 
 // ------------------------------------------------------------- glyphs ----
 // Colour says what kind of thing; the glyph says what was done to it, and the
-// arrow on the tendril says which way the data went. Shared by the legend.
+// arrow on the link says which way the data went. Shared with the legend.
 const VERB_DIR = {read:-1, search:-1, fetch:-1, pull:-1, list:-1,
                   write:1, edit:0, delete:1, push:1, commit:1,
                   execute:0, spawn:1, skill:0, mcp:0, note:1};
 const VERBS = ['read','write','edit','execute','search','fetch','commit','push','pull','delete','spawn','skill','mcp'];
 
 function glyph(c, verb, x, y, s, col, fade){
-  c.save(); c.strokeStyle = col; c.fillStyle = col; c.lineWidth = 1.25;
+  c.save(); c.strokeStyle = col; c.fillStyle = col; c.lineWidth = 1.8;
   c.lineJoin = 'round'; c.lineCap = 'round'; c.globalAlpha = fade == null ? 1 : fade;
   const P = (...pts) => { c.beginPath(); pts.forEach(([a,b],i)=> i?c.lineTo(a,b):c.moveTo(a,b)); };
   switch(verb){
-    case 'read':                                   // open triangle, pointing in
-      P([x-s,y-s*0.8],[x+s,y-s*0.8],[x,y+s]); c.closePath(); c.stroke(); break;
-    case 'write':                                  // solid triangle, pointing out
-      P([x-s,y+s*0.8],[x+s,y+s*0.8],[x,y-s]); c.closePath(); c.fill(); break;
-    case 'edit':                                   // solid diamond
-      P([x,y-s],[x+s,y],[x,y+s],[x-s,y]); c.closePath(); c.fill(); break;
-    case 'execute':                                // play
-      P([x-s*0.75,y-s],[x+s,y],[x-s*0.75,y+s]); c.closePath(); c.fill(); break;
-    case 'search':                                 // magnifier
+    case 'read':  P([x-s,y-s*0.8],[x+s,y-s*0.8],[x,y+s]); c.closePath(); c.stroke(); break;
+    case 'write': P([x-s,y+s*0.8],[x+s,y+s*0.8],[x,y-s]); c.closePath(); c.fill(); break;
+    case 'edit':  P([x,y-s],[x+s,y],[x,y+s],[x-s,y]); c.closePath(); c.fill(); break;
+    case 'execute': P([x-s*0.75,y-s],[x+s,y],[x-s*0.75,y+s]); c.closePath(); c.fill(); break;
+    case 'search':
       c.beginPath(); c.arc(x-s*0.18,y-s*0.18,s*0.72,0,7); c.stroke();
       P([x+s*0.38,y+s*0.38],[x+s,y+s]); c.stroke(); break;
-    case 'fetch': case 'pull':                     // arrow down to a line
+    case 'fetch': case 'pull':
       P([x,y-s],[x,y+s*0.25]); c.stroke();
       P([x-s*0.55,y-s*0.25],[x,y+s*0.4],[x+s*0.55,y-s*0.25]); c.stroke();
       P([x-s,y+s],[x+s,y+s]); c.stroke(); break;
-    case 'push':                                   // arrow up off a line
+    case 'push':
       P([x,y+s*0.25],[x,y-s]); c.stroke();
       P([x-s*0.55,y-s*0.3],[x,y-s],[x+s*0.55,y-s*0.3]); c.stroke();
       P([x-s,y+s],[x+s,y+s]); c.stroke(); break;
-    case 'commit':                                 // node on a branch line
+    case 'commit':
       P([x-s*1.1,y],[x-s*0.5,y]); c.stroke(); P([x+s*0.5,y],[x+s*1.1,y]); c.stroke();
       c.beginPath(); c.arc(x,y,s*0.52,0,7); c.fill();
       c.beginPath(); c.arc(x,y,s*0.95,0,7); c.stroke(); break;
-    case 'delete':                                 // cross
+    case 'delete':
       P([x-s*0.8,y-s*0.8],[x+s*0.8,y+s*0.8]); c.stroke();
       P([x+s*0.8,y-s*0.8],[x-s*0.8,y+s*0.8]); c.stroke(); break;
-    case 'spawn':                                  // fork
-      P([x,y+s],[x,y]); c.stroke();
-      P([x-s*0.85,y-s],[x,y],[x+s*0.85,y-s]); c.stroke(); break;
-    case 'skill':                                  // asterisk
+    case 'spawn':
+      P([x,y+s],[x,y]); c.stroke(); P([x-s*0.85,y-s],[x,y],[x+s*0.85,y-s]); c.stroke(); break;
+    case 'skill':
       for (let i=0;i<3;i++){ const a = i*Math.PI/3;
         P([x-Math.cos(a)*s, y-Math.sin(a)*s],[x+Math.cos(a)*s, y+Math.sin(a)*s]); c.stroke(); }
       break;
-    case 'mcp':                                    // hexagon
+    case 'mcp':
       c.beginPath();
       for (let i=0;i<6;i++){ const a = Math.PI/6 + i*Math.PI/3;
         i ? c.lineTo(x+Math.cos(a)*s, y+Math.sin(a)*s) : c.moveTo(x+Math.cos(a)*s, y+Math.sin(a)*s); }
       c.closePath(); c.stroke(); break;
-    default:                                       // note / unknown
-      c.fillRect(x-s*0.7, y-s*0.7, s*1.4, s*1.4);
+    default: c.fillRect(x-s*0.7, y-s*0.7, s*1.4, s*1.4);
   }
   c.restore();
 }
 
-// what KIND of thing a channel holds, drawn beside its name
 function kindIcon(c, type, x, y, s, col, fade){
-  c.save(); c.strokeStyle = col; c.fillStyle = col; c.lineWidth = 1.1;
+  c.save(); c.strokeStyle = col; c.fillStyle = col; c.lineWidth = 1.5;
   c.lineJoin = 'round'; c.globalAlpha = fade == null ? 1 : fade;
   const P = (...pts) => { c.beginPath(); pts.forEach(([a,b],i)=> i?c.lineTo(a,b):c.moveTo(a,b)); };
   switch(type){
-    case 'file':                                   // page with a folded corner
+    case 'file':
       P([x-s*0.7,y-s],[x+s*0.3,y-s],[x+s*0.7,y-s*0.55],[x+s*0.7,y+s],[x-s*0.7,y+s]);
       c.closePath(); c.stroke();
       P([x+s*0.3,y-s],[x+s*0.3,y-s*0.55],[x+s*0.7,y-s*0.55]); c.stroke(); break;
-    case 'dir': case 'repo':                       // folder
+    case 'dir': case 'repo':
       P([x-s,y+s*0.8],[x-s,y-s*0.5],[x-s*0.2,y-s*0.5],[x,y-s*0.85],[x+s,y-s*0.85],[x+s,y+s*0.8]);
       c.closePath(); c.stroke(); break;
     case 'commit':
       c.beginPath(); c.arc(x,y,s*0.5,0,7); c.fill();
       c.beginPath(); c.arc(x,y,s*0.9,0,7); c.stroke(); break;
-    case 'command':                                // prompt chevron
+    case 'command':
       P([x-s*0.7,y-s*0.7],[x+s*0.1,y],[x-s*0.7,y+s*0.7]); c.stroke();
       P([x+s*0.3,y+s*0.75],[x+s,y+s*0.75]); c.stroke(); break;
-    case 'url': case 'domain':                     // globe
+    case 'url': case 'domain':
       c.beginPath(); c.arc(x,y,s*0.85,0,7); c.stroke();
       P([x-s*0.85,y],[x+s*0.85,y]); c.stroke();
       c.beginPath(); c.ellipse(x,y,s*0.42,s*0.85,0,0,7); c.stroke(); break;
-    case 'search': kindIconSearch(c,x,y,s); break;
-    case 'gh_repo': case 'pr': case 'issue':       // branch
+    case 'search':
+      c.beginPath(); c.arc(x-s*0.15,y-s*0.15,s*0.65,0,7); c.stroke();
+      c.beginPath(); c.moveTo(x+s*0.35,y+s*0.35); c.lineTo(x+s*0.9,y+s*0.9); c.stroke(); break;
+    case 'gh_repo': case 'pr': case 'issue':
       c.beginPath(); c.arc(x-s*0.6,y+s*0.6,s*0.32,0,7); c.stroke();
       c.beginPath(); c.arc(x+s*0.6,y-s*0.6,s*0.32,0,7); c.stroke();
       P([x-s*0.6,y+s*0.25],[x-s*0.6,y-s*0.3],[x+s*0.6,y-s*0.3]); c.stroke(); break;
@@ -540,17 +463,103 @@ function kindIcon(c, type, x, y, s, col, fade){
   }
   c.restore();
 }
-function kindIconSearch(c,x,y,s){
-  c.beginPath(); c.arc(x-s*0.15,y-s*0.15,s*0.65,0,7); c.stroke();
-  c.beginPath(); c.moveTo(x+s*0.35,y+s*0.35); c.lineTo(x+s*0.9,y+s*0.9); c.stroke();
+
+// ------------------------------------------------------------- the field ----
+// Entities are not pinned to the instant they were touched. Each one is a body
+// that drifts left with time and outward as it goes stale; a fresh touch pulls
+// it back toward the stream and relights its link. So calling the same file
+// twice does not draw it twice -- it brings the one that is already there back.
+const ENT = new Map();
+const BAND = {
+  artifact: {dir:-1, inner:0.09, outer:0.38},
+  world:    {dir: 1, inner:0.09, outer:0.38},
+  agent:    {dir: 0, inner:0.03, outer:0.15},
+};
+const HOT = 34;            // seconds of session time a touch stays "current"
+const LINK = 90;           // how long the link to the stream lingers
+let PXPS = 3.4;            // px of drift per second of session time (wheel)
+let ptr = 0, prevFlow = null, lastRefSeen = null;
+
+const hashf = s => { let h = 0; for (let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i))|0; return h; };
+
+function spawn(n, id, verb){
+  const cls = CLASS[n.type] || 'agent', b = BAND[cls];
+  const h = hashf(id), cy = C.h/2, hx = HEADX();
+  const dir = b.dir || (h % 2 ? 1 : -1);
+  const p = {id, n, cls, dir, jit: ((h >> 3) % 40) - 20,
+             vx: 0, vy: 0, touches: 0, burn: 0, last: -1e9, flash: 0,
+             verb: verb || 'execute', err: false, fade: 1, grow: 1};
+  // Two ways a thing can arrive. Something the agent MAKES is thrown out of the
+  // stream; something that was already out there and is only now reached for
+  // surfaces from the dark where it always was.
+  if ((VERB_DIR[verb] || 0) > 0){
+    p.x = hx; p.y = cy;
+    p.vx = -2.2 - (h % 5)*0.4; p.vy = dir*(3.2 + (h % 4)*0.5);
+    p.grow = 0.08;                       // small at the line, swells as it flies
+  } else {
+    p.x = hx - 30 - (h % 70); p.y = cy + dir*C.h*b.outer*(0.92 + (h%8)/50);
+    p.fade = 0;                          // out of the dark
+  }
+  return p;
 }
-// arrowhead partway along the tendril, pointing the way the data moved
-function arrowOn(c, x, y0, y1, dir, col, a){
-  if (!dir) return;
-  c.save(); c.strokeStyle = hexA(col, a); c.lineWidth = 1.2; c.lineCap = 'round';
-  const t = 0.55, y = y0 + (y1-y0)*t, up = (y1 < y0) ? -1 : 1, d = up*dir*5;
-  c.beginPath(); c.moveTo(x-3.2, y-d); c.lineTo(x, y+d*0.6); c.lineTo(x+3.2, y-d); c.stroke();
-  c.restore();
+
+function feed(e){
+  const ref = refTime();
+  for (const id of (e.nodes || [])){
+    const n = NODE.get(id);
+    if (!n) continue;
+    let p = ENT.get(id);
+    if (!p){ p = spawn(n, id, e.verb); ENT.set(id, p); }
+    p.n = n; p.touches++; p.last = ref; p.flash = 1;
+    p.burn = (p.burn || 0) + (e.usd || 0)/Math.max(1, (e.nodes||[]).length);
+    p.verb = e.verb || 'execute'; p.err = !!e.err; p.target = e.target;
+  }
+}
+
+function pump(ref){
+  // feed events as the head reaches them; a jump backwards rebuilds the field
+  if (lastRefSeen != null && ref < lastRefSeen - 1){
+    ENT.clear(); ptr = 0;
+    while (ptr < EV.length && EV[ptr].ts < ref - 240) ptr++;
+  }
+  lastRefSeen = ref;
+  while (ptr < EV.length && EV[ptr].ts <= ref){ feed(EV[ptr]); ptr++; }
+}
+
+function physics(ref){
+  const f = flowOf(ref);
+  const d = prevFlow == null ? 0 : Math.max(0, f - prevFlow);
+  prevFlow = f;
+  const cy = C.h/2, hx = HEADX(), arr = [...ENT.values()];
+  for (const p of arr){
+    p.x -= d * PXPS;                                  // scroll, roughly with time
+    const age = ref - p.last, hot = Math.exp(-Math.max(0, age)/HOT);
+    const b = BAND[p.cls];
+    const ty = cy + p.dir * C.h * (b.inner + (1-hot)*(b.outer-b.inner)) + p.jit*(1-hot);
+    p.vy += (ty - p.y) * 0.016;
+    if (hot > 0.1) p.vx += (hx - p.x) * 0.02 * hot;   // a fresh touch pulls it back
+    p.flash = Math.max(0, p.flash - 0.02);
+    p.fade += (1 - p.fade)*0.055;        // surfacing
+    p.grow += (1 - p.grow)*0.075;        // swelling
+  }
+  for (let i=0;i<arr.length;i++){                      // keep them from stacking
+    const a = arr[i];
+    for (let j=i+1;j<arr.length;j++){
+      const b2 = arr[j];
+      const dx = a.x-b2.x, dy = a.y-b2.y, d2 = dx*dx+dy*dy;
+      if (d2 > 9000 || d2 < 0.01) continue;
+      const k = (9000 - d2)/9000 * 0.62, dd = Math.sqrt(d2);
+      a.vx += dx/dd*k; a.vy += dy/dd*k; b2.vx -= dx/dd*k; b2.vy -= dy/dd*k;
+    }
+  }
+  for (const p of arr){
+    p.vx *= 0.88; p.vy *= 0.88;
+    p.x += Math.max(-14, Math.min(14, p.vx));
+    p.y += Math.max(-14, Math.min(14, p.vy));
+    p.x = Math.min(p.x, hx - 14);                      // the future is empty
+    p.y = Math.max(34, Math.min(C.h - 104, p.y));      // clear of the furniture
+    if (p.x < -90) ENT.delete(p.id);                   // gone off the back
+  }
 }
 
 // ---------------------------------------------------------------- stream ----
@@ -558,152 +567,142 @@ const cv = $('cv'), ctx = cv.getContext('2d');
 function fit(c){ const d=Math.min(2,devicePixelRatio||1), r=c.getBoundingClientRect();
   c.width=Math.max(1,r.width*d); c.height=Math.max(1,r.height*d); return {w:r.width,h:r.height,d}; }
 let C = fit(cv);
-addEventListener('resize', () => { C = fit(cv); layout(); drawMap(); });
-const HEADX = () => C.w*0.84;
-const xOf = (t, headF) => HEADX() - (headF - flowOf(t))*px;
+addEventListener('resize', () => { C = fit(cv); drawMap(); });
+const HEADX = () => C.w*0.74;
+const xOf = (t, headF) => HEADX() - (headF - flowOf(t))*PXPS;
 
 const gk = $('glyphs'), gx = gk.getContext('2d');
 function drawGlyphKey(){
   gx.setTransform(2,0,0,2,0,0); gx.clearRect(0,0,gk.width,gk.height);
-  gx.font = '9px ui-monospace,monospace'; gx.textAlign = 'left'; gx.textBaseline = 'middle';
-  const perRow = 7, cw = 69, rh = 19;
+  gx.font = '11px ui-monospace,monospace'; gx.textAlign = 'left'; gx.textBaseline = 'middle';
+  const perRow = 7, cw = 86, rh = 23;
   VERBS.forEach((v,i) => {
     const col = i % perRow, row = (i/perRow)|0;
-    const x = 8 + col*cw, y = 9 + row*rh;
-    glyph(gx, v, x, y, 4.2, '#93a4bd', 1);
-    gx.fillStyle = '#64748b'; gx.fillText(v, x+8, y+0.5);
+    const x = 10 + col*cw, y = 11 + row*rh;
+    glyph(gx, v, x, y, 5.4, '#b2c2d6', 1);
+    gx.fillStyle = '#8296ae'; gx.fillText(v, x+11, y+0.5);
   });
-  gx.fillStyle = '#64748b';
-  gx.fillText('↑ out  ↓ in', 8 + 2*69, 9 + 2*19);
-  gx.fillText('colour = kind · glyph = what it did', 8, 9 + 2*19);
+  const KIND = [['#c98500','artifacts · files, repos, commits'],
+                ['#3987e5','agent · commands, tools, skills'],
+                ['#d55181','world · searches, urls, repos']];
+  let kx = 10;
+  KIND.forEach(([c,label]) => {
+    gx.fillStyle = c; gx.beginPath(); gx.arc(kx+4, 11+2*23, 4.5, 0, 7); gx.fill();
+    gx.fillStyle = '#b2c2d6'; gx.fillText(label, kx+13, 11+2*23+0.5);
+    kx += 13 + gx.measureText(label).width + 18;
+  });
+  gx.fillStyle = '#8296ae';
+  gx.fillText('size = tokens burned · nearer the line = touched more recently · ×n = times returned to',
+              10, 11 + 3*23);
 }
+
 function drawStream(now){
   const {w,h,d} = C; ctx.setTransform(d,0,0,d,0,0); ctx.clearRect(0,0,w,h);
   if (!snap || !times.length) return;
-  const ref = refTime(), headF = flowOf(ref), hx = HEADX();
-  reflow(ref, headF, w);
+  const ref = refTime(), headF = flowOf(ref), hx = HEADX(), cy = h/2;
+  pump(ref);
+  if (!frozen) physics(ref);
   drawGlyphKey();
-  const spineY = band.spineY || h*0.6;
 
-  // time grid
-  ctx.font = '9px ui-monospace,monospace'; ctx.textAlign = 'center';
-  const stepF = px > 18 ? 5 : px > 9 ? 15 : 30;
-  const f0 = Math.floor((headF - hx/px)/stepF)*stepF;
-  for (let f = f0; f < headF + (w-hx)/px; f += stepF){
-    const x = hx - (headF-f)*px;
-    if (x < 0 || x > w) continue;
-    ctx.strokeStyle = 'rgba(57,135,229,.07)';
-    ctx.beginPath(); ctx.moveTo(x,12); ctx.lineTo(x,h-16); ctx.stroke();
-    let lo=0, hi=flows.length-1;
-    while (lo<hi){ const m=(lo+hi+1)>>1; flows[m]<=f ? lo=m : hi=m-1; }
-    ctx.fillStyle = '#64748b';
-    ctx.fillText(clock(times[lo] + (f-flows[lo])).slice(0,5), x, h-5);
-  }
-
-  // channel guides + lifelines
-  for (const [k,y] of rowY){
-    const cls = k.split(':')[0];
-    ctx.strokeStyle = hexA(COLOR[cls], .055);
-    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();
-  }
-
-  // the stream: spine carrying cost per turn, flowing toward the head
-  const S = (snap.state.steps||[]).filter(s => s.ts);
-  const inWin = S.filter(st => { const x = xOf(st.ts, headF); return x > -40 && x < w+40 && st.ts <= ref; });
-  const maxU = Math.max(1e-6, ...inWin.map(s=>s.usd));
-  ctx.beginPath(); ctx.moveTo(0, spineY);
+  // the stream itself: cost per turn, flowing toward the head
+  const S = (snap.state.steps||[]).filter(s => s.ts && s.ts <= ref);
+  const inWin = S.filter(st => { const x = xOf(st.ts, headF); return x > -40 && x < w+40; });
+  const maxU = Math.max(1e-6, ...inWin.map(s => s.usd));
+  ctx.strokeStyle = 'rgba(57,135,229,.42)'; ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(Math.min(hx, w), cy); ctx.stroke();
+  ctx.beginPath();
   let started = false;
   for (const st of S){
     const x = xOf(st.ts, headF);
     if (x < -40 || x > w+40) continue;
-    if (st.ts > ref) continue;
-    const y = spineY - Math.sqrt(st.usd/maxU)*(h*0.12);
+    const y = cy - Math.sqrt(st.usd/maxU)*(h*0.085);
     started ? ctx.lineTo(x,y) : (ctx.moveTo(x,y), started = true);
   }
   if (started){
-    ctx.strokeStyle = 'rgba(57,135,229,.85)'; ctx.lineWidth = 1.6;
-    ctx.shadowColor = '#3987e5'; ctx.shadowBlur = 10; ctx.stroke(); ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(122,180,250,.95)'; ctx.lineWidth = 2.2;
+    ctx.shadowColor = '#3987e5'; ctx.shadowBlur = 14; ctx.stroke(); ctx.shadowBlur = 0;
   }
-  ctx.strokeStyle = 'rgba(57,135,229,.30)'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(0,spineY); ctx.lineTo(Math.min(hx,w),spineY); ctx.stroke();
-
-  // current flowing along the spine
-  if (!reduce){
-    for (let i=0;i<46;i++){
-      const ph = ((now/9000)*px + i/46) % 1, x = ph*hx;
-      ctx.fillStyle = `rgba(147,196,255,${0.05 + 0.33*Math.sin(ph*Math.PI)})`;
-      ctx.beginPath(); ctx.arc(x, spineY, 1.3, 0, 7); ctx.fill();
+  if (!reduce){                                   // current, moving with the flow
+    for (let i=0;i<34;i++){
+      const ph = ((now/7000)*PXPS + i/34) % 1, x = ph*hx;
+      ctx.fillStyle = `rgba(170,210,255,${0.10 + 0.4*Math.sin(ph*Math.PI)})`;
+      ctx.beginPath(); ctx.arc(x, cy, 1.9, 0, 7); ctx.fill();
     }
   }
 
-  // every touch: a tendril from the stream out to the thing it touched
-  const labelled = new Set(), lifelines = new Map();
-  for (const e of EV){
-    if (e.ts > ref) continue;
-    const x = xOf(e.ts, headF);
-    if (x < -30 || x > w+30) continue;
-    const age = headF - flowOf(e.ts);
-    const flare = Math.max(0, 1 - age/FLARE);
-    for (const r of (e.rows||[])){
-      r.y = bandY(r.cls, r.row);
-      const col = COLOR[r.cls], up = r.y < spineY, dir = up ? -1 : 1;
-      const a = 0.12 + 0.55*Math.exp(-age/26) + 0.45*flare;
-      // lifeline: the same entity touched again, linked back along its channel
-      const lkey = r.cls+':'+r.row+':'+r.id, prev = lifelines.get(lkey);
-      if (prev != null && x - prev > 1){
-        ctx.strokeStyle = hexA(col, .10 + .35*Math.exp(-age/30) + .3*flare);
-        ctx.lineWidth = 1 + flare;
-        ctx.beginPath(); ctx.moveTo(prev, r.y); ctx.lineTo(x, r.y); ctx.stroke();
-      }
-      lifelines.set(lkey, x);
-      ctx.strokeStyle = hexA(col, a); ctx.lineWidth = 0.9 + 1.7*flare;
-      ctx.beginPath(); ctx.moveTo(x, spineY);
-      const bow = Math.min(26, Math.abs(r.y-spineY)*0.45);
-      ctx.bezierCurveTo(x, spineY + dir*bow, x - bow*0.75, r.y - dir*bow*0.5, x, r.y);
-      ctx.stroke();
-      if (flare > 0){                      // the moment of contact
-        ctx.fillStyle = hexA('#e6edf6', flare*0.9);
-        ctx.beginPath(); ctx.arc(x, r.y, 2.2 + flare*5, 0, 7); ctx.fill();
-        ctx.strokeStyle = hexA(col, flare); ctx.lineWidth = 1.2;
-        ctx.beginPath(); ctx.arc(x, r.y, 4 + (1-flare)*16, 0, 7); ctx.stroke();
-      }
-      const vb = e.verb || 'execute', vdir = VERB_DIR[vb] ?? 0;
-      arrowOn(ctx, x, spineY, r.y, vdir, col, 0.25 + 0.5*flare + 0.25*Math.exp(-age/30));
-      ctx.shadowColor = col; ctx.shadowBlur = flare*16;
-      glyph(ctx, vb, x, r.y, 4.1 + flare*2.2, flare > .35 ? '#e6edf6' : col,
-            0.4 + 0.6*Math.exp(-age/40) + flare);
-      ctx.shadowBlur = 0;
-      if (e.err){ ctx.strokeStyle = '#e66767'; ctx.lineWidth = 1.2;
-        ctx.beginPath(); ctx.arc(x, r.y, 7, 0, 7); ctx.stroke(); }
-
-      const n = NODE.get(r.id);
-      const key = r.cls+':'+r.row;
-      if (n && !labelled.has(key)){
-        labelled.add(key);
-        const fade = 0.45 + 0.55*Math.exp(-age/40);
-        const lx = Math.max(10, Math.min(x+10, w-150));
-        kindIcon(ctx, n.type, lx, r.y - 8, 4.2, col, fade);
-        ctx.textAlign = 'left'; ctx.font = '10px ui-monospace,monospace';
-        ctx.fillStyle = hexA(flare > .2 ? '#e6edf6' : col, fade);
-        ctx.fillText(String(n.label).slice(0,26), lx + 8, r.y - 5);
-      }
+  // links back to the stream, then the bodies
+  const ents = [...ENT.values()].sort((a,b) => a.last - b.last);
+  for (const p of ents){
+    const age = ref - p.last, hot = Math.exp(-Math.max(0,age)/HOT);
+    if (age > LINK && p.touches < 2) continue;
+    const col = COLOR[p.cls], a = (0.10 + 0.62*hot) * p.fade;
+    ctx.strokeStyle = hexA(col, a); ctx.lineWidth = 1 + 2.4*hot;
+    const anchor = Math.max(0, Math.min(hx, p.x));
+    ctx.beginPath(); ctx.moveTo(anchor, cy);
+    ctx.bezierCurveTo(anchor + (p.x-anchor)*0.35, cy + (p.y-cy)*0.1,
+                      p.x - (p.x-anchor)*0.25, cy + (p.y-cy)*0.75, p.x, p.y);
+    ctx.stroke();
+    if (p.flash > 0.02 && !reduce){               // a packet runs the link on contact
+      const t = 1 - p.flash, px2 = anchor + (p.x-anchor)*t, py2 = cy + (p.y-cy)*t;
+      ctx.fillStyle = hexA('#ffffff', p.flash*0.9);
+      ctx.beginPath(); ctx.arc(px2, py2, 2.6 + p.flash*2.6, 0, 7); ctx.fill();
     }
   }
 
-  // the head: now
-  if (hx >= 0 && hx <= w){
-    const g = ctx.createLinearGradient(hx-34,0,hx,0);
-    g.addColorStop(0,'rgba(230,237,246,0)'); g.addColorStop(1,'rgba(230,237,246,.08)');
-    ctx.fillStyle = g; ctx.fillRect(hx-34, 10, 34, h-26);
-    ctx.strokeStyle = 'rgba(230,237,246,.75)'; ctx.lineWidth = 1.2;
-    ctx.beginPath(); ctx.moveTo(hx,10); ctx.lineTo(hx,h-16); ctx.stroke();
-    const pulse = reduce ? 0 : (Math.sin(now/260)+1)/2;
-    ctx.fillStyle = `rgba(230,237,246,${.6+.4*pulse})`;
-    ctx.shadowColor = '#e6edf6'; ctx.shadowBlur = 12+pulse*10;
-    ctx.beginPath(); ctx.arc(hx, spineY, 3.4+pulse*1.4, 0, 7); ctx.fill(); ctx.shadowBlur = 0;
-    ctx.textAlign = 'right'; ctx.font = '9px ui-monospace,monospace'; ctx.fillStyle = '#93a4bd';
-    ctx.fillText(mode==='live' ? 'now' : clock(ref), hx-5, 19);
+  const boxes = [];
+  const maxBurn = Math.max(1e-4, ...ents.map(p => p.burn || 0));
+  for (const p of ents){
+    const age = ref - p.last, hot = Math.exp(-Math.max(0,age)/HOT);
+    const col = COLOR[p.cls];
+    // a body grows with what it has cost: burn is the weight, touches the count
+    const r = 7 + 23*Math.sqrt((p.burn || 0)/maxBurn);
+    const alpha = (0.55 + 0.45*hot) * p.fade;     // never fades into the background
+    const rr = r * (0.3 + 0.7*p.grow);
+    ctx.save(); ctx.globalAlpha = alpha;
+    ctx.shadowColor = col; ctx.shadowBlur = 8 + hot*20;
+    ctx.fillStyle = hexA(col, 0.20 + 0.25*hot);
+    ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, 7); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = hexA(col, 0.85); ctx.lineWidth = 1.8;
+    ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, 7); ctx.stroke();
+    glyph(ctx, p.verb, p.x, p.y, 5.6*Math.min(1,p.grow*1.6), p.flash > 0.3 ? '#ffffff' : col, 1);
+    if (p.err){
+      ctx.strokeStyle = '#e66767'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(p.x, p.y, rr + 4, 0, 7); ctx.stroke();
+    }
+    if (p.touches > 1){                           // how many times we came back
+      ctx.fillStyle = hexA(col, .95); ctx.font = 'bold 11px ui-monospace,monospace';
+      ctx.textAlign = 'center'; ctx.fillText('×'+p.touches, p.x, p.y + rr + 14);
+    }
+    ctx.restore();
+
+    const txt = String(p.n.label).slice(0,30);
+    ctx.font = '13px ui-monospace,monospace'; ctx.textAlign = 'left';
+    const tw = ctx.measureText(txt).width, lx = p.x + rr + 9, ly = p.y + 4;
+    const box = [lx-12, ly-13, lx+tw+2, ly+5];
+    const clash = boxes.some(b2 => !(box[2]<b2[0]||box[0]>b2[2]||box[3]<b2[1]||box[1]>b2[3]));
+    if (!clash && lx < w - 40){
+      boxes.push(box);
+      ctx.fillStyle = 'rgba(8,13,24,.82)';
+      ctx.fillRect(box[0], box[1], box[2]-box[0]+4, box[3]-box[1]);
+      kindIcon(ctx, p.n.type, lx-5, ly-4, 5, col, 0.6+0.4*hot);
+      ctx.fillStyle = hexA(hot > .3 ? '#f2f6fb' : '#b2c2d6', 1);
+      ctx.fillText(txt, lx+6, ly);
+    }
   }
+
+  // now
+  const g = ctx.createLinearGradient(hx-44,0,hx,0);
+  g.addColorStop(0,'rgba(242,246,251,0)'); g.addColorStop(1,'rgba(242,246,251,.10)');
+  ctx.fillStyle = g; ctx.fillRect(hx-44, 10, 44, h-30);
+  ctx.strokeStyle = 'rgba(242,246,251,.85)'; ctx.lineWidth = 1.6;
+  ctx.beginPath(); ctx.moveTo(hx,12); ctx.lineTo(hx,h-18); ctx.stroke();
+  const pulse = reduce ? 0 : (Math.sin(now/260)+1)/2;
+  ctx.fillStyle = `rgba(242,246,251,${.72+.28*pulse})`;
+  ctx.shadowColor = '#ffffff'; ctx.shadowBlur = 14+pulse*12;
+  ctx.beginPath(); ctx.arc(hx, cy, 5+pulse*1.8, 0, 7); ctx.fill(); ctx.shadowBlur = 0;
+  ctx.textAlign = 'right'; ctx.font = '11px ui-monospace,monospace'; ctx.fillStyle = '#b2c2d6';
+  ctx.fillText(mode === 'live' ? 'now' : clock(ref), hx-8, 23);
 }
 
 // ---------------------------------------------------------------- input ----
@@ -717,8 +716,7 @@ addEventListener('mouseup', () => drag = null);
 addEventListener('mousemove', ev => {
   if (!drag) return;
   mode = 'scrub';
-  const df = (ev.clientX - drag.x)/px;          // drag right = go back in time
-  const f = flowOf(drag.t) - df;
+  const f = flowOf(drag.t) - (ev.clientX - drag.x)/PXPS;
   let lo=0, hi=flows.length-1;
   while (lo<hi){ const m=(lo+hi+1)>>1; flows[m]<=f ? lo=m : hi=m-1; }
   cursor = Math.min(snap.state.t_end, times[lo] + (f - flows[lo]));
@@ -726,41 +724,36 @@ addEventListener('mousemove', ev => {
 });
 cv.addEventListener('mousemove', ev => {
   const r = cv.getBoundingClientRect(), mx = ev.clientX-r.left, my = ev.clientY-r.top;
-  const headF = flowOf(refTime());
-  let best = null, bd = 16;
-  for (const e of EV){
-    if (e.ts > refTime()) continue;
-    const x = xOf(e.ts, headF); if (Math.abs(x-mx) > 16) continue;
-    for (const rr of (e.rows||[])){
-      const d = Math.hypot(x-mx, rr.y-my);
-      if (d < bd){ bd = d; best = {e, r:rr}; }
-    }
+  let best = null, bd = 1e9;
+  for (const p of ENT.values()){
+    const d = Math.hypot(p.x-mx, p.y-my);
+    if (d < 26 && d < bd){ bd = d; best = p; }
   }
   hover = best;
   const tip = $('tip');
-  if (!best){ tip.style.display='none'; return; }
-  const n = NODE.get(best.r.id) || {};
-  tip.innerHTML = `<div class="h" style="color:${COLOR[best.r.cls]}">${esc(best.e.tool)} · ${esc(n.label||'')}</div>`+
-    `<div class="r">${clock(best.e.ts)} · ${esc(best.e.target||'')}</div>`+
-    (best.e.bytes ? `<div class="r">result ${fmtK(best.e.bytes)} B</div>` : '')+
-    (n.usd ? `<div class="r">attributed ${fmtUsd(n.usd)} over ${n.touches||1} touch(es)</div>` : '')+
-    (best.e.err ? `<div class="r" style="color:var(--bad)">error</div>` : '');
+  if (!best){ tip.style.display = 'none'; return; }
+  const n = best.n, age = refTime() - best.last;
+  tip.innerHTML = `<div class="h" style="color:${COLOR[best.cls]}">${esc(n.type)} · ${esc(n.label)}</div>`+
+    `<div class="r">${best.touches} touch(es) · burned ${fmtUsd(best.burn||0)} · ${esc(best.verb)}</div>`+
+    `<div class="r">last ${age<90?age.toFixed(0)+'s':fmtDur(age)} ago</div>`+
+    (best.target ? `<div class="r">${esc(String(best.target).slice(0,90))}</div>` : '')+
+    (n.usd ? `<div class="r">attributed ${fmtUsd(n.usd)}</div>` : '')+
+    (best.err ? `<div class="r" style="color:var(--bad)">last call errored</div>` : '');
   tip.style.display = 'block';
-  tip.style.left = Math.min(innerWidth-330, ev.clientX+13)+'px';
-  tip.style.top = Math.min(innerHeight-120, ev.clientY+13)+'px';
+  tip.style.left = Math.min(innerWidth-390, ev.clientX+14)+'px';
+  tip.style.top = Math.min(innerHeight-130, ev.clientY+14)+'px';
 });
 cv.addEventListener('mouseleave', () => { hover = null; $('tip').style.display = 'none'; });
-cv.addEventListener('wheel', ev => {
+cv.addEventListener('wheel', ev => {           // how fast the field scrolls
   ev.preventDefault();
-  px = Math.max(1.5, Math.min(40, px*(ev.deltaY<0 ? 1.12 : 1/1.12)));
-  layout();
+  PXPS = Math.max(0.6, Math.min(26, PXPS*(ev.deltaY<0 ? 1.12 : 1/1.12)));
 }, {passive:false});
 addEventListener('keydown', ev => {
   const k = ev.key.toLowerCase();
   if (k===' '){ frozen = !frozen; ev.preventDefault(); }
   if (k==='t') showTable();
   if (k==='s') showPicker();
-  if (k==='r') mode==='live' ? startReplay() : goLive();
+  if (k==='r'){ ENT.clear(); ptr = 0; prevFlow = null; mode==='live' ? startReplay() : goLive(); }
   if (k==='escape' || k==='enter') goLive();
   if (k==='[' && mode==='replay') rate *= 0.6;
   if (k===']' && mode==='replay') rate *= 1.6;
@@ -775,35 +768,33 @@ function drawMap(){
   const S = (snap.state.steps||[]).filter(s=>s.ts);
   if (!S.length) return;
   const ref = refTime(), max = Math.max(...S.map(s=>s.usd), 1e-6);
-  const pad = {l:40,r:8,t:8,b:14}, iw = w-pad.l-pad.r, ih = h-pad.t-pad.b;
-  $('mapinfo').textContent = 'peak '+fmtUsd(max)+' · '+S.length+' turns · drag the stream to scrub';
-  mx2.font='9px ui-monospace,monospace'; mx2.textAlign='right';
-  mx2.strokeStyle='rgba(57,135,229,.12)';
+  const pad = {l:50,r:10,t:10,b:16}, iw = w-pad.l-pad.r, ih = h-pad.t-pad.b;
+  $('mapinfo').textContent = 'peak '+fmtUsd(max)+' · '+S.length+' turns · drag the field to scrub';
+  mx2.font='11px ui-monospace,monospace'; mx2.textAlign='right';
+  mx2.strokeStyle='rgba(57,135,229,.22)';
   mx2.beginPath(); mx2.moveTo(pad.l,pad.t+ih); mx2.lineTo(w-pad.r,pad.t+ih); mx2.stroke();
-  mx2.fillStyle='#5f7391'; mx2.fillText(fmtUsd(max), pad.l-6, pad.t+6);
-  const bw = Math.max(1, iw/S.length - 1.5);
+  mx2.fillStyle='#8296ae'; mx2.fillText(fmtUsd(max), pad.l-8, pad.t+8);
+  const bw = Math.max(1.5, iw/S.length - 1.5);
   S.forEach((s,i) => {
-    const x = pad.l + (iw/S.length)*i, bh = Math.max(1,(s.usd/max)*ih);
-    mx2.fillStyle = (s.ts<=ref) ? 'rgba(57,135,229,.72)' : 'rgba(57,135,229,.12)';
+    const x = pad.l + (iw/S.length)*i, bh = Math.max(1.5,(s.usd/max)*ih);
+    mx2.fillStyle = (s.ts<=ref) ? 'rgba(90,160,240,.9)' : 'rgba(57,135,229,.22)';
     mx2.fillRect(x, pad.t+ih-bh, bw, bh);
   });
-  // the window the stream is showing
-  const headF = flowOf(ref), leftF = headF - HEADX()/px, rightF = headF + (C.w-HEADX())/px;
   const fx = f => { const t0=flows[0], t1=flows[flows.length-1];
     return pad.l + iw*Math.max(0,Math.min(1,(f-t0)/Math.max(1e-6,t1-t0))); };
-  mx2.fillStyle='rgba(230,237,246,.08)';
-  mx2.fillRect(fx(leftF), pad.t, Math.max(2,fx(rightF)-fx(leftF)), ih);
-  mx2.strokeStyle='rgba(230,237,246,.6)'; mx2.lineWidth=1;
+  const headF = flowOf(ref);
+  mx2.strokeStyle='rgba(242,246,251,.8)'; mx2.lineWidth=1.6;
   mx2.beginPath(); mx2.moveTo(fx(headF),pad.t); mx2.lineTo(fx(headF),pad.t+ih); mx2.stroke();
 }
 mcv.addEventListener('click', ev => {
   if (!snap || !times.length) return;
-  const r = mcv.getBoundingClientRect(), pad={l:40,r:8};
+  const r = mcv.getBoundingClientRect(), pad={l:50,r:10};
   const f = flows[0] + ((ev.clientX-r.left-pad.l)/(r.width-pad.l-pad.r))*(flows[flows.length-1]-flows[0]);
   let lo=0, hi=flows.length-1;
   while (lo<hi){ const m=(lo+hi+1)>>1; flows[m]<=f ? lo=m : hi=m-1; }
-  mode = 'scrub'; cursor = times[lo]; $('mode').textContent='scrub';
-  $('mode').style.color='var(--c-artifact)'; paintChrome();
+  mode = 'scrub'; cursor = times[lo];
+  ENT.clear(); ptr = 0; prevFlow = null;
+  $('mode').textContent='scrub'; $('mode').style.color='var(--c-artifact)'; paintChrome();
 });
 
 // ---------------------------------------------------------------- picker ----
@@ -811,33 +802,36 @@ async function showPicker(force){
   const el = $('picker');
   if (!force && el.style.display === 'block'){ el.style.display = 'none'; return; }
   el.style.display = 'block';
-  $('picklist').innerHTML = '<div class="sub" style="color:var(--ink-3)">reading ~/.claude/projects…</div>';
+  $('picklist').innerHTML = '<div class="sub">reading sessions…</div>';
   let d;
   try { d = await (await fetch('/sessions')).json(); }
   catch(e){ $('picklist').innerHTML = '<div class="sub">could not list sessions</div>'; return; }
-  const ago = t => { const s = Date.now()/1000 - t;
+  const ago = t => { if (!t) return ''; const s = Date.now()/1000 - t;
     return s < 90 ? s.toFixed(0)+'s ago' : s < 5400 ? (s/60).toFixed(0)+'m ago'
          : s < 172800 ? (s/3600).toFixed(1)+'h ago' : (s/86400).toFixed(0)+'d ago'; };
-  const rows = [`<div class="sess ${d.follow?'on':''}" data-file="__newest__">`+
+  const rows = [];
+  if (!d.remote) rows.push(`<div class="sess ${d.follow?'on':''}" data-file="__newest__">`+
     `<span class="id">auto</span><span class="ti">Follow whichever session is newest`+
     `<div class="sub">re-points by itself when a new session starts</div></span>`+
-    `<span class="rt">${d.follow?'active':''}</span></div>`];
-  for (const s of d.sessions){
+    `<span class="rt">${d.follow?'active':''}</span></div>`);
+  for (const s of (d.sessions||[])){
     rows.push(`<div class="sess ${s.active?'on':''}" data-file="${esc(s.file)}">`+
       `<span class="id">${esc(s.name)}</span>`+
       `<span class="ti">${esc(s.title)}<div class="sub">${esc(s.cwd||'')}`+
-      `${s.branch?' · '+esc(s.branch):''} · ${(s.size/1024).toFixed(0)} kB</div></span>`+
+      `${s.branch?' · '+esc(s.branch):''}${s.size?' · '+(s.size/1024).toFixed(0)+' kB':''}</div></span>`+
       `<span class="rt">${ago(s.mtime)}${s.active?'<br>attached':''}</span></div>`);
   }
+  if (d.error) rows.push(`<div class="sub" style="color:var(--bad)">${esc(d.error)}</div>`);
   $('picklist').innerHTML = rows.join('');
   $('picklist').querySelectorAll('.sess').forEach(el2 => el2.addEventListener('click', async () => {
     const f = el2.getAttribute('data-file');
     $('picklist').innerHTML = '<div class="sub">attaching…</div>';
     try { await fetch('/select?file=' + encodeURIComponent(f)); } catch(e){}
     $('picker').style.display = 'none';
-    snap = null; booted = false; N = new Map(); EV = []; seenEv = new Set(); rowY.clear();
+    snap = null; booted = false; EV = []; ENT.clear(); ptr = 0; prevFlow = null; seenEv = new Set();
   }));
 }
+
 function showTable(){
   const el = $('table');
   if (el.style.display === 'block'){ el.style.display='none'; return; }
@@ -850,16 +844,13 @@ function showTable(){
       `<td class="num">${n.touches||''}</td></tr>`).join('')+'</tbody></table>';
   el.style.display='block';
 }
-
 $('nowmeta').addEventListener('click', () => showPicker(true));
+
 let lastT = performance.now();
 function frame(now){
   const dt = Math.min(0.1,(now-lastT)/1000); lastT = now;
-  try {
-    if (!frozen) tickTime(dt);
-    tickNums();
-    drawStream(now);
-  } catch(err){ console.error(err); }
+  try { tickTime(dt); tickNums(); drawStream(now); }
+  catch(err){ console.error(err); }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

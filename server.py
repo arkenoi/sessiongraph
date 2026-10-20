@@ -349,12 +349,18 @@ class Tailer:
             inflight = [{"tool": t, "target": target_of(t, i), "id": k, "nodes": h}
                         for k, (s, t, i, h) in list(self.g.pending.items())]
             # the stream needs every call, not just the tail: one event per touch
+            # what each call cost: its turn's price, split across that turn's calls
+            per_step = {}
+            for c in d["calls"]:
+                per_step[c["step"]] = per_step.get(c["step"], 0) + 1
+            step_usd = {n["id"]: n.get("usd", 0.0) for n in d["nodes"] if n["type"] == "step"}
             events = []
             for c in d["calls"][-2000:]:
                 events.append({"tool": c["tool"], "target": target_of(c["tool"], c.get("input")),
                                "ts": parse_ts(c.get("ts")), "bytes": c.get("result_bytes"),
                                "err": bool(c.get("is_error")), "nodes": c.get("nodes") or [],
-                               "verb": c.get("verb") or "execute"})
+                               "verb": c.get("verb") or "execute",
+                               "usd": step_usd.get(c["step"], 0.0) / max(1, per_step.get(c["step"], 1))})
             recent = events[-26:]
             last = self.steps[-1] if self.steps else {}
             ctx = (last.get("t") or {})

@@ -225,21 +225,27 @@ its target, a cadence strip of tool calls over the last three minutes, seconds
 since the last record, model and effort. Then burn rate over the trailing five
 minutes, total spend, context size of the last request, cache hit rate.
 
-**The stream.** The main panel is time, left to right. Down the middle runs the
-walk itself — a spine whose height is what each turn cost — flowing toward a head
-at *now*. Entities are channels above and below it: artifacts above, commands and
-tools just above the spine, the outside world below. Every tool call fires a
-tendril from the spine out to the thing it touched, which flares white at the
-moment of contact and then cools. Touch the same file again and a lifeline links
-the two along its channel, so you see the stream crossing the same node twice.
+**The field.** The main panel is the session as a drift field. Down the middle
+runs the stream — the walk itself, its height the cost of each turn — flowing
+toward a head at *now*. Everything the agent touches is a body in that field:
 
-Channels are allocated only to entities with traffic in view and packed tight, so
-a quiet band closes up and the lanes slide as the window moves. An entity that
-goes quiet for longer than the window gives its channel back.
+- A body **drifts left with time**, roughly, and **outward as it goes stale**, so
+  the view scrolls without time being a hard axis.
+- **Coming back to something does not draw it again.** The body that is already
+  there is pulled back toward the stream and its link relights, with a `×n`
+  counter for how many times you have returned to it. A file read twelve times is
+  one large body near the line, not twelve marks.
+- **Size is what it burned.** Each call's turn cost is split across what it
+  touched and accumulates on the body, scaled against the heaviest thing on
+  screen, so the expensive parts of a session are literally the big ones.
+- **How a thing arrives says what happened.** Something the agent *makes* — a
+  write, a commit, a push, a spawn — is thrown out of the stream and swells as it
+  flies. Something that already existed and is only now *reached for* — a read, a
+  search, a fetch — surfaces out of the dark where it always was.
+- Colour is the kind of thing, the glyph is the verb, the arrow on the link is
+  which way the data went, and a red ring means the call failed.
 
-Idle time is compressed: the x axis is *flow time*, which advances with the clock
-but clamps any silence to a few seconds, so the stream keeps moving and a
-seven-hour session stays legible.
+Bodies that go untouched long enough drift off the back and are dropped.
 
 **Replay.** On load the head starts at the first record and sweeps the whole
 session in about 25 seconds, lighting each touch as it passes and counting the
