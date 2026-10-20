@@ -243,6 +243,7 @@ class SessionGraph:
     def __init__(self, attribution="caused"):
         self._cur_ts = None
         self._prev_uuid = None
+        self.seen = set()
         self.nodes = {}
         self.edges = {}
         self.calls = []            # flat tool-call log for drill-down
@@ -324,6 +325,8 @@ class SessionGraph:
         return None
 
     def ingest(self, rec):
+        """Records may arrive more than once (an event-API pump re-posts the
+        newest page each poll), so a record seen before is dropped."""
         t = rec.get("type") if isinstance(rec, dict) else None
         if t and t not in ("assistant", "user"):
             self.skipped[t] += 1          # keep the per-type breakdown
@@ -332,6 +335,12 @@ class SessionGraph:
         if rec is None:
             self.skipped["unrecognised"] += 1
             return
+        uid = rec.get("uuid")
+        if uid:
+            if uid in self.seen:
+                self.skipped["duplicate"] += 1
+                return
+            self.seen.add(uid)
         if not rec.get("parentUuid") and rec.get("uuid"):
             rec["parentUuid"] = self._prev_uuid          # synthesise a linear walk
             self._prev_uuid = rec["uuid"]
@@ -616,11 +625,27 @@ def iter_records(path):
         head = fh.read(4096)
         fh.seek(0)
         stripped = head.lstrip()
-        if stripped[:1] == "[" or '"ccr"' in head[:200] or '"data"' in head[:200]:
+        looks_json = stripped[:1] in "[{" or '"ccr"' in head or '"data"' in head or '"assistant"' in head
+        if looks_json:
             try:
                 raw = fh.read()
-                i = min((j for j in (raw.find("["), raw.find("{")) if j >= 0), default=0)
-                doc = json.loads(raw[i:])
+                doc = None
+                dec = json.JSONDecoder()
+                # a dump may be wrapped in prose or tags; find the first value that
+                # parses and ignore whatever surrounds it
+                for i, ch in enumerate(raw):
+                    if ch not in "[{":
+                        continue
+                    try:
+                        doc, _ = dec.raw_decode(raw[i:])
+                    except ValueError:
+                        continue
+                    if isinstance(doc, list) or (isinstance(doc, dict) and
+                            any(k in doc for k in ("ccr", "data", "events", "assistant", "user"))):
+                        break
+                    doc = None
+                if doc is None:
+                    raise ValueError("no JSON payload found")
                 if isinstance(doc, dict):
                     doc = (doc.get("ccr") or doc)
                     doc = doc.get("data") or doc.get("events") or []

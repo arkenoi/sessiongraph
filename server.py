@@ -129,13 +129,15 @@ class Tailer:
     """One session file -> one incrementally-built graph."""
 
     def __init__(self, path, root=None, follow_newest=True, attribution="caused",
-                 events_cmd=None, remote=None):
+                 events_cmd=None, remote=None, watch_dir=None):
         self.root, self.follow = root, follow_newest
         self.events_cmd = events_cmd
         self.cmd_sig = None
         self.remote = remote
         self.proc = None
         self.stream_path = None
+        self.watch_dir = watch_dir
+        self.seen_files = {}
         self.lock = threading.Lock()
         self.subs = []
         self.set_path(path)
@@ -148,6 +150,7 @@ class Tailer:
         self.steps = []          # ordered step snapshots for the burn series
         self.last_ts = None
         self.active_step = None
+        self.step_ids = set()
         self.seen_models = []
 
     # -- ingest
@@ -159,12 +162,18 @@ class Tailer:
         self._ingest_rec(rec)
 
     def _ingest_rec(self, rec):
+        # Records from the events API carry no top-level `type`, so normalise
+        # first or the cost series silently stays empty while the graph fills.
+        norm = SessionGraph.normalize(rec) or rec
         self.g.ingest(rec)
-        ts = parse_ts(rec.get("timestamp"))
+        ts = parse_ts(norm.get("timestamp"))
         if ts:
             self.last_ts = max(self.last_ts or 0, ts)
-        if rec.get("type") == "assistant":
-            uid = f"step:{rec.get('uuid')}"
+        if norm.get("type") == "assistant":
+            uid = f"step:{norm.get('uuid')}"
+            if uid in self.step_ids:            # a re-posted page: already counted
+                return
+            self.step_ids.add(uid)
             n = self.g.nodes.get(uid)
             if n:
                 self.active_step = uid
@@ -179,6 +188,8 @@ class Tailer:
                                    "text": n["attrs"].get("text_preview")})
 
     def poll(self):
+        if self.watch_dir:
+            return self._poll_dir()
         if self.remote:
             if self.proc and self.proc.poll() is not None:   # ssh dropped
                 print("remote stream ended; retrying", file=sys.stderr)
@@ -213,6 +224,48 @@ class Tailer:
                 if ln.strip():
                     self._ingest_line(ln.decode("utf-8", "replace"))
         return True
+
+    def _poll_dir(self):
+        """Merge every dump dropped into a directory.
+
+        The transport is somebody else's problem: anything that can reach a
+        session's events -- a Claude session with the remote tools, a Routine,
+        a script -- writes files here and they are merged as they land. Ingest
+        is keyed by record uuid, so overlapping pages are free.
+        """
+        from sessiongraph import iter_records
+        changed = False
+        try:
+            names = sorted(os.listdir(self.watch_dir))
+        except OSError:
+            return False
+        for name in names:
+            if name.startswith("."):
+                continue
+            f = os.path.join(self.watch_dir, name)
+            try:
+                st = os.stat(f)
+            except OSError:
+                continue
+            if not os.path.isfile(f):
+                continue
+            sig = (st.st_mtime, st.st_size)
+            if self.seen_files.get(f) == sig:
+                continue
+            self.seen_files[f] = sig
+            n = 0
+            try:
+                with self.lock:
+                    for rec in iter_records(f):
+                        before = len(self.g.nodes)
+                        self._ingest_rec(rec)
+                        n += 1
+            except Exception as e:
+                print(f"dump {name}: {e}", file=sys.stderr)
+                continue
+            print(f"merged {name}: {n} records", file=sys.stderr)
+            changed = True
+        return changed
 
     def start_stream(self, path):
         """Follow an append-only transcript on another machine, live."""
@@ -462,6 +515,10 @@ def main():
     ap.add_argument("--root", help="override ~/.claude/projects")
     ap.add_argument("--port", type=int, default=8777)
     ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--watch-dir", metavar="DIR",
+                    help="merge event dumps dropped into this directory. Any process "
+                         "that can reach a session's events writes files here; records "
+                         "are de-duplicated by uuid, so overlapping pages are harmless.")
     ap.add_argument("--remote", metavar="CMD",
                     help="watch sessions on another machine, e.g. --remote 'ssh box'. "
                          "Lists transcripts there and streams the one you pick. Your own "
@@ -476,12 +533,15 @@ def main():
                     help="stay on one file instead of jumping to the newest session")
     a = ap.parse_args()
     path = a.file or (find_sessions(a.root) or [None])[0]
-    if not path and not a.events_cmd and not a.remote:
+    if a.watch_dir:
+        os.makedirs(a.watch_dir, exist_ok=True)
+        path = path or ""
+    if not path and not a.events_cmd and not a.remote and not a.watch_dir:
         sys.exit("no transcripts found under %s" % (a.root or "~/.claude/projects"))
     remote = Remote(a.remote, a.remote_root) if a.remote else None
     t = Tailer(path or "", root=a.root,
-               follow_newest=not (a.no_follow or a.file or a.events_cmd or remote),
-               events_cmd=a.events_cmd, remote=remote)
+               follow_newest=not (a.no_follow or a.file or a.events_cmd or remote or a.watch_dir),
+               events_cmd=a.events_cmd, remote=remote, watch_dir=a.watch_dir)
     if remote:                                   # attach to the newest one over there
         items, err = remote.list()
         if err:
@@ -491,7 +551,8 @@ def main():
     threading.Thread(target=t.run, kwargs={"interval": max(0.2, a.interval)},
                      daemon=True).start()
     srv = ThreadingHTTPServer((a.host, a.port), make_handler(t))
-    src = ("remote: " + a.remote) if a.remote else \
+    src = ("watching " + a.watch_dir) if a.watch_dir else \
+          ("remote: " + a.remote) if a.remote else \
           ("events-cmd: " + a.events_cmd[:60]) if a.events_cmd else \
           ("tailing " + os.path.basename(path)) if path else "waiting for a session"
     print(f"HUD  http://{a.host}:{a.port}/   {src}")

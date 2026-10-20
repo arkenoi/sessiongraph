@@ -119,6 +119,39 @@ remote session's events writing them to a file (`--events-cmd 'cat dump.json'`).
 If you ever find yourself wanting to paste a token into this tool, don't — put it
 in the command instead.
 
+## Claude as the transport
+
+When the session you want isn't on any disk you can reach — a cloud session, or
+one you'd rather not ssh to — the fetcher can be Claude itself. The HUD doesn't
+care who fills the folder:
+
+```sh
+python3 server.py --watch-dir ~/.sessiongraph/dumps
+```
+
+Anything that can reach a session's events writes files in there and they are
+merged as they land: a Claude session with the Claude Code Remote tools calling
+`list_events`, a Routine firing on a schedule, a script, or you by hand. Records
+are de-duplicated by `uuid`, so a pump that re-posts the newest page every poll
+costs nothing and needs no cursor bookkeeping. Dumps can be a JSON array, the
+`{"ccr":{"data":[…]}}` envelope, JSONL, or a tool result with prose around it —
+the parser finds the payload.
+
+Two things to know before you lean on it:
+
+- **Each poll costs tokens.** A hundred events is tens of thousands of tokens in
+  the pumping session's context. Poll in minutes, not seconds, use `after_id` to
+  fetch only what's new, and run the pump on a cheap model. Where the harness
+  spills a large tool result straight to a file, copying that file into the
+  watch directory keeps it out of the model's context entirely.
+- **A `claude -p` subprocess may not have the tools.** The remote-session tools
+  are injected into a session by its harness, not inherited by a CLI child
+  process — `claude mcp list` inside a cloud container reports none. Check what
+  your own CLI actually has before building a loop around it.
+
+None of this is needed for an RC session: that transcript is already on the
+machine the bridge points at, so `--remote 'ssh box'` is free and instant.
+
 ### Cloud sessions
 
 The transcript is inside the container and the container has no inbound port, so
