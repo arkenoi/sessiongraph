@@ -167,6 +167,39 @@ turn per poll, not the size of the payload: where the harness spills a large too
 result straight to a file, copying that file into `--watch-dir` keeps the events
 out of the model's context entirely. Poll in minutes, and run the pump on Haiku.
 
+## Without Claude Code at all
+
+`fetch_events.py` talks to the sessions API directly — no Claude Code install,
+no MCP, no model turn, stdlib Python only — and writes pages where the HUD
+watches. It does what the Claude Code client itself does on the wire, read
+straight from its bundle: `GET /v1/code/sessions/{id}/events`, paged with
+`cursor`.
+
+```sh
+export CLAUDE_SESSIONS_TOKEN=...                     # see below for where it comes from
+python3 fetch_events.py --list                       # find the session id
+python3 fetch_events.py session_01ABC... --probe     # 200 means you are in
+python3 fetch_events.py session_01ABC... --all --every 60 &
+python3 server.py --watch-dir ~/.sessiongraph/dumps
+```
+
+Two kinds of credential work, told apart by prefix:
+
+| token | where it comes from | sent as |
+|---|---|---|
+| `sk-ant-oat…` | `claude setup-token`, run **once, on any machine** — a long-lived OAuth token | `Authorization: Bearer` + `anthropic-beta: oauth-2025-04-20` |
+| `sk-ant-sid…` | your claude.ai browser session: the `sessionKey` cookie, plus `--org <organization uuid>` | `Cookie: sessionKey=…` + `X-Organization-Uuid` |
+
+The second needs no Claude Code anywhere, ever. It is also your login, so treat
+it like a password: it is short-lived, it is never printed, and it never goes
+in a file you'd commit. The first is the cleaner long-term choice if you can
+run the CLI once somewhere.
+
+Both the token and the organisation uuid are yours to supply; the script reads
+`CLAUDE_SESSIONS_TOKEN` (or `--token-file`) and `CLAUDE_CODE_ORGANIZATION_UUID`
+(or `--org`) and otherwise handles no credentials. It makes no connection to
+anything but `api.anthropic.com`.
+
 ## Claude as the transport
 
 When the session you want isn't on any disk you can reach — a cloud session, or

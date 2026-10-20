@@ -341,6 +341,12 @@ class SessionGraph:
                 self.skipped["duplicate"] += 1
                 return
             self.seen.add(uid)
+        # API-shaped tool-result records carry no session id; inherit the last one
+        # seen rather than inventing an "unknown" session node for them
+        if rec.get("sessionId"):
+            self._last_session = rec["sessionId"]
+        elif getattr(self, "_last_session", None):
+            rec["sessionId"] = self._last_session
         if not rec.get("parentUuid") and rec.get("uuid"):
             rec["parentUuid"] = self._prev_uuid          # synthesise a linear walk
             self._prev_uuid = rec["uuid"]
