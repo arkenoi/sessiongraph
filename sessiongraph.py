@@ -620,48 +620,68 @@ class SessionGraph:
 
 def iter_records(path):
     """Yield records from a local JSONL transcript, or from a dump of the
-    remote events API (a JSON array, or the {"ccr":{"data":[...]}} envelope)."""
+    remote events API (a JSON array, the {"ccr":{"data":[...]}} envelope, or a
+    tool result with prose around it).
+
+    Decided by structure, not by sniffing for JSON anywhere in the file: a
+    transcript starts with `{` too, and one that happens to *contain* a pasted
+    API dump was being parsed as that dump, yielding nothing.
+    """
+    def expand(doc):
+        if isinstance(doc, dict):
+            doc = doc.get("ccr") or doc
+            doc = doc.get("data") or doc.get("events") or []
+        return doc if isinstance(doc, list) else []
+
     with open(path, "r", errors="replace") as fh:
-        head = fh.read(4096)
+        first = ""
+        while True:
+            line = fh.readline()
+            if not line:
+                break
+            if line.strip():
+                first = line.strip()
+                break
+        if not first:
+            return
+        try:
+            head = json.loads(first)
+        except Exception:
+            head = None
+
+        if isinstance(head, dict) and any(k in head for k in ("ccr", "data", "events")):
+            for rec in expand(head):            # a one-line API dump
+                yield rec
+            return
+        if head is not None:                    # JSONL: stream it, line by line
+            yield head
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    yield json.loads(line)
+                except Exception:
+                    continue
+            return
+
+        # neither: a JSON payload with something wrapped around it
         fh.seek(0)
-        stripped = head.lstrip()
-        looks_json = stripped[:1] in "[{" or '"ccr"' in head or '"data"' in head or '"assistant"' in head
-        if looks_json:
+        raw = fh.read()
+        dec = json.JSONDecoder()
+        for marker in ('{"ccr"', '{"data"', '{"events"', "[", "{"):
+            i = raw.find(marker)
+            if i < 0:
+                continue
             try:
-                raw = fh.read()
-                doc = None
-                dec = json.JSONDecoder()
-                # a dump may be wrapped in prose or tags; find the first value that
-                # parses and ignore whatever surrounds it
-                for i, ch in enumerate(raw):
-                    if ch not in "[{":
-                        continue
-                    try:
-                        doc, _ = dec.raw_decode(raw[i:])
-                    except ValueError:
-                        continue
-                    if isinstance(doc, list) or (isinstance(doc, dict) and
-                            any(k in doc for k in ("ccr", "data", "events", "assistant", "user"))):
-                        break
-                    doc = None
-                if doc is None:
-                    raise ValueError("no JSON payload found")
-                if isinstance(doc, dict):
-                    doc = (doc.get("ccr") or doc)
-                    doc = doc.get("data") or doc.get("events") or []
-                for rec in doc:
+                doc, _ = dec.raw_decode(raw[i:])
+            except ValueError:
+                continue
+            out = expand(doc) if isinstance(doc, dict) else (doc if isinstance(doc, list) else [])
+            if out:
+                for rec in out:
                     yield rec
                 return
-            except Exception:
-                fh.seek(0)                      # not a dump after all; fall through
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                yield json.loads(line)
-            except Exception:
-                continue
 
 
 def find_sessions(root=None):
