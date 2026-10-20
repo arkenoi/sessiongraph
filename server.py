@@ -415,7 +415,8 @@ class Tailer:
             time.sleep(interval)
 
 
-def make_handler(tailer):
+def make_handler(tailer, token=None):
+    TOKEN = token
     class H(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -431,6 +432,51 @@ def make_handler(tailer):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
+
+        def _authed(self):
+            if not TOKEN:
+                return True
+            from urllib.parse import urlparse, parse_qs
+            q = parse_qs(urlparse(self.path).query)
+            return (self.headers.get("X-Token") == TOKEN or
+                    (q.get("token") or [""])[0] == TOKEN)
+
+        def do_POST(self):
+            p = self.path.split("?")[0]
+            if p != "/ingest":
+                return self._send("not found", code=404)
+            if not self._authed():
+                return self._send(json.dumps({"ok": False, "error": "bad token"}),
+                                  "application/json", code=403)
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                body = self.rfile.read(min(n, 32 * 1024 * 1024)).decode("utf-8", "replace")
+            except Exception as e:
+                return self._send(json.dumps({"ok": False, "error": str(e)}),
+                                  "application/json", code=400)
+            recs, count = [], 0
+            body = body.strip()
+            if body[:1] == "[":                      # a JSON array
+                try:
+                    recs = json.loads(body)
+                except Exception:
+                    recs = []
+            else:                                     # JSONL, or one object
+                for line in body.split("\n"):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        recs.append(json.loads(line))
+                    except Exception:
+                        pass
+            with tailer.lock:
+                for rec in recs:
+                    tailer._ingest_rec(rec)
+                    count += 1
+            if count:
+                tailer.broadcast()
+            return self._send(json.dumps({"ok": True, "records": count}), "application/json")
 
         def do_GET(self):
             p = self.path.split("?")[0]
@@ -515,6 +561,9 @@ def main():
     ap.add_argument("--root", help="override ~/.claude/projects")
     ap.add_argument("--port", type=int, default=8777)
     ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--ingest-token", metavar="TOK",
+                    help="shared secret required on POST /ingest. Invent one; it is not "
+                         "an Anthropic credential. Use it whenever --host is not localhost.")
     ap.add_argument("--watch-dir", metavar="DIR",
                     help="merge event dumps dropped into this directory. Any process "
                          "that can reach a session's events writes files here; records "
@@ -550,7 +599,7 @@ def main():
         print(f"remote  {a.remote}  {len(items)} session(s); attached to {items[0]['name']}")
     threading.Thread(target=t.run, kwargs={"interval": max(0.2, a.interval)},
                      daemon=True).start()
-    srv = ThreadingHTTPServer((a.host, a.port), make_handler(t))
+    srv = ThreadingHTTPServer((a.host, a.port), make_handler(t, a.ingest_token))
     src = ("watching " + a.watch_dir) if a.watch_dir else \
           ("remote: " + a.remote) if a.remote else \
           ("events-cmd: " + a.events_cmd[:60]) if a.events_cmd else \

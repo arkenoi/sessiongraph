@@ -119,6 +119,54 @@ remote session's events writing them to a file (`--events-cmd 'cat dump.json'`).
 If you ever find yourself wanting to paste a token into this tool, don't — put it
 in the command instead.
 
+## Zero token burn
+
+Three of the four paths cost nothing at all, because no model is involved:
+
+| path | model in the loop? | cost |
+|---|---|---|
+| local / RC transcript on disk | no | **zero** |
+| `--remote 'ssh box'` | no | **zero** |
+| hook pushing to `POST /ingest` | no | **zero** |
+| a Claude session calling `list_events` | yes, one turn per poll | small but real |
+
+For an RC session there is nothing to optimise: the transcript is a file on that
+machine and the HUD reads it. No API, no polling, no tokens.
+
+### Push, instead of polling
+
+Claude Code hooks run as shell commands, outside the model, so a session can ship
+its own transcript to a HUD on another machine for free. In that session's
+`settings.json`:
+
+```json
+{ "hooks": { "PostToolUse": [ { "matcher": "*", "hooks": [ { "type": "command",
+  "command": "jq -r .transcript_path | xargs -r tail -n 40 | curl -s -m 3 -X POST -H 'X-Token: YOURSECRET' --data-binary @- http://your-host:8777/ingest" } ] } ] } }
+```
+
+and on the watching machine:
+
+```sh
+python3 server.py --host 0.0.0.0 --ingest-token YOURSECRET
+```
+
+It re-posts the last 40 lines after every tool call and lets de-duplication sort
+it out — records are keyed by `uuid`, so overlapping pushes are free and no
+cursor state is needed anywhere. `--ingest-token` is a secret you invent, not an
+Anthropic credential; set one whenever `--host` is not localhost, because the
+endpoint takes session content from anyone who can reach it.
+
+From a cloud container this also needs that host allowed by the environment's
+network policy (Network access → Allowed domains in the environment settings).
+
+### When a model is unavoidable
+
+Only when nothing on the far side can push and nothing of yours can reach the
+disk — a cloud session you can only touch through Claude. Then it is one small
+turn per poll, not the size of the payload: where the harness spills a large tool
+result straight to a file, copying that file into `--watch-dir` keeps the events
+out of the model's context entirely. Poll in minutes, and run the pump on Haiku.
+
 ## Claude as the transport
 
 When the session you want isn't on any disk you can reach — a cloud session, or
