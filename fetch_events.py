@@ -7,14 +7,22 @@ directly and drops pages where `server.py --watch-dir` is looking:
     export CLAUDE_SESSIONS_TOKEN=...            # or --token-file PATH
     python3 fetch_events.py session_01ABC... --out ~/.sessiongraph/dumps --every 60
 
-Two kinds of credential work, and the script tells them apart by prefix:
+The credential is the claude.ai login token Claude Code itself holds, scope
+user:sessions:claude_code. Only that works on these routes — the CLI's own code
+refuses API keys and says `claude setup-token` tokens are "limited to inference
+only", and that has been checked against the bundle, not assumed.
 
-  sk-ant-oat...  an OAuth token from `claude setup-token` (one-time, any machine)
-                 -> sent as  Authorization: Bearer  + anthropic-beta: oauth-2025-04-20
-  sk-ant-sid...  your claude.ai browser session (the `sessionKey` cookie)
-                 -> sent as  Cookie: sessionKey=...  + X-Organization-Uuid (--org)
-                 no Claude Code anywhere; the cookie is short-lived and is your login,
-                 so treat it like a password.
+  One-time, on any machine that can run it:   claude login
+  Then the token is in:   ~/.claude/.credentials.json -> claudeAiOauth.accessToken
+                          (macOS: Keychain item "Claude Code-credentials")
+
+  python3 fetch_events.py --token-file ~/.claude/.credentials.json ...   # reads that key
+  export CLAUDE_SESSIONS_TOKEN=sk-ant-oat...                            # or paste it
+
+After that this script needs no Claude Code. The token expires (the CLI
+refreshes it silently; a copied one does not), so when you start seeing 401,
+copy it again. A `sk-ant-sid` browser cookie is accepted on the off chance it
+works, but nothing in the bundle sends it on these routes: unverified.
 
 The HUD de-duplicates by record uuid, so re-fetching the newest page each poll
 is harmless; `--all` walks the whole history once first.
@@ -25,17 +33,25 @@ you name, sends it, and forgets it.
 import argparse, json, os, sys, time, urllib.error, urllib.parse, urllib.request
 
 BASE = os.environ.get("CLAUDE_SESSIONS_BASE", "https://api.anthropic.com")
-# On the wire, as the Claude Code client itself does it (read from its bundle):
-#   OAuth token  -> Authorization: Bearer <tok>, anthropic-beta: oauth-2025-04-20
-#   sk-ant-sid   -> Cookie: sessionKey=<tok>, X-Organization-Uuid: <org>
-OAUTH_BETA = "oauth-2025-04-20"
+# On the wire, as the Claude Code client's own header builders do it:
+#   Authorization: Bearer <login token>, anthropic-version: 2023-06-01,
+#   Content-Type: application/json (even on GET). No beta header on these routes
+#   (oauth-2025-04-20 is attached to inference calls only). x-organization-uuid
+#   is optional here and required only on /teleport-events.
 DEFAULT_VERSION = "2023-06-01"
+MAX_LIMIT = 100                                   # 500 is rejected with 400
 
 
 def load_token(a):
     if a.token_file:
         with open(os.path.expanduser(a.token_file)) as fh:
-            return fh.read().strip()
+            raw = fh.read().strip()
+        if raw[:1] == "{":                         # ~/.claude/.credentials.json
+            try:
+                return json.loads(raw)["claudeAiOauth"]["accessToken"]
+            except Exception:
+                sys.exit("token file is JSON but has no claudeAiOauth.accessToken")
+        return raw
     tok = os.environ.get("CLAUDE_SESSIONS_TOKEN") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
     if not tok:
         sys.exit("no token: set CLAUDE_SESSIONS_TOKEN (or CLAUDE_CODE_OAUTH_TOKEN) or pass --token-file")
@@ -47,21 +63,18 @@ def request(a, token, path, params=None):
     if params:
         url += "?" + urllib.parse.urlencode({k: v for k, v in params.items() if v is not None}, doseq=True)
     headers = {"accept": "application/json", "anthropic-version": a.version,
-               "user-agent": "sessiongraph-fetch/1"}
-    betas = list(a.beta)
-    if token.startswith("sk-ant-sid"):            # browser session
+               "content-type": "application/json", "user-agent": "sessiongraph-fetch/1"}
+    org = a.org or os.environ.get("CLAUDE_CODE_ORGANIZATION_UUID") or os.environ.get("CLAUDE_ORG_UUID")
+    if token.startswith("sk-ant-sid"):            # browser cookie: unverified on this host
         headers["Cookie"] = "sessionKey=" + token
-        org = a.org or os.environ.get("CLAUDE_CODE_ORGANIZATION_UUID") or os.environ.get("CLAUDE_ORG_UUID")
-        if org:
-            headers["X-Organization-Uuid"] = org
     elif a.auth_header.lower() == "x-api-key":
         headers["x-api-key"] = token
-    else:                                          # OAuth token
+    else:
         headers["Authorization"] = "Bearer " + token
-        if OAUTH_BETA not in betas:
-            betas.insert(0, OAUTH_BETA)
-    if betas:
-        headers["anthropic-beta"] = ",".join(betas)
+    if org:
+        headers["x-organization-uuid"] = org
+    if a.beta:
+        headers["anthropic-beta"] = ",".join(a.beta)
     req = urllib.request.Request(url, headers=headers)
     for attempt in range(5):
         try:
@@ -87,29 +100,43 @@ def request(a, token, path, params=None):
     return 0, {"error": "gave up"}
 
 
+def id_forms(session):
+    """The CLI rewrites session_<x> to cse_<x> for paths; the API may take either."""
+    if session.startswith("session_"):
+        return [session, "cse_" + session[len("session_"):]]
+    if session.startswith("cse_"):
+        return [session, "session_" + session[len("cse_"):]]
+    return [session]
+
+
+def get_either(a, token, path_fmt, params=None):
+    """Try the id as given, and on 404 the other prefix form."""
+    last = (404, {"error": "not found"})
+    for sid in id_forms(a.session):
+        code, doc = request(a, token, path_fmt.format(sid=sid), params)
+        if code != 404:
+            if sid != a.session:
+                print(f"note: the API wanted the id as {sid}", file=sys.stderr)
+                a.session = sid
+            return code, doc
+        last = (code, doc)
+    return last
+
+
 def events_page(a, token, session, cursor=None, asc=False):
-    params = {"limit": a.limit}
-    if a.kinds:
-        params["kinds"] = a.kinds
+    params = {"limit": min(a.limit, MAX_LIMIT)}
     if asc:
         params["sort_order"] = "asc"
     if cursor:
         params["cursor"] = cursor
-    return request(a, token, f"/v1/code/sessions/{session}/events", params)
+    return get_either(a, token, "/v1/code/sessions/{sid}/events", params)
 
 
 def next_cursor(doc, items):
-    """Whatever the API calls its continuation: next_cursor, cursor, or the
-    oldest id on the page when it only reports has_more."""
+    """The route's continuation is `next_cursor`; null or absent means last page."""
     if not isinstance(doc, dict):
         return None
-    for k in ("next_cursor", "cursor", "first_id"):
-        if doc.get(k):
-            return doc[k]
-    if doc.get("has_more") and items:
-        x = items[-1] if isinstance(items[-1], dict) else {}
-        return x.get("uuid") or (x.get("assistant") or x.get("user") or {}).get("uuid")
-    return None
+    return doc.get("next_cursor") or None
 
 
 def items_of(doc):
@@ -134,10 +161,10 @@ def main():
     ap.add_argument("--every", type=float, default=0, help="poll interval in seconds (0 = once)")
     ap.add_argument("--all", action="store_true", help="walk the full history first, paging backwards")
     ap.add_argument("--limit", type=int, default=100)
-    ap.add_argument("--kinds", nargs="*", default=["assistant", "user"])
+
     ap.add_argument("--token-file")
     ap.add_argument("--auth-header", default="Authorization", help="Authorization (default) or x-api-key")
-    ap.add_argument("--org", help="organization uuid, needed with an sk-ant-sid browser token")
+    ap.add_argument("--org", help="organization uuid (optional on these routes)")
     ap.add_argument("--beta", nargs="*", default=[], help="extra anthropic-beta values")
     ap.add_argument("--version", default=DEFAULT_VERSION)
     ap.add_argument("--probe", action="store_true", help="just GET the session and report the status")
@@ -168,7 +195,7 @@ def main():
         ap.error("a session id is required unless --list is given")
 
     if a.probe:
-        code, doc = request(a, token, f"/v1/code/sessions/{a.session}")
+        code, doc = get_either(a, token, "/v1/code/sessions/{sid}")
         print(code, (doc.get("error") if isinstance(doc, dict) and "error" in doc
                      else {k: doc[k] for k in list(doc)[:6]} if isinstance(doc, dict) else type(doc).__name__))
         sys.exit(0 if code == 200 else 1)
@@ -197,8 +224,12 @@ def main():
         code, doc = events_page(a, token, a.session)
         if code != 200:
             print(f"HTTP {code}: {doc.get('error')}", file=sys.stderr)
-            if code in (401, 403):
-                sys.exit(1)
+            if code == 401:
+                sys.exit("401: the login token is missing, expired or revoked — copy a fresh "
+                         "claudeAiOauth.accessToken from ~/.claude/.credentials.json")
+            if code == 403:
+                sys.exit("403: wrong kind of token for this route — it must be the claude.ai login "
+                         "token (user:sessions:claude_code), not an API key or setup-token")
         else:
             f = write_page(a, doc, time.strftime("%Y%m%d-%H%M%S"))
             print(f"{time.strftime('%H:%M:%S')}  {len(items_of(doc))} events -> {os.path.basename(f)}", file=sys.stderr)

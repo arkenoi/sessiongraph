@@ -183,22 +183,36 @@ python3 fetch_events.py session_01ABC... --all --every 60 &
 python3 server.py --watch-dir ~/.sessiongraph/dumps
 ```
 
-Two kinds of credential work, told apart by prefix:
+**The credential is the claude.ai login token that Claude Code itself holds** —
+scope `user:sessions:claude_code`. It is the only thing these routes accept.
+That is checked against the CLI's own code, not assumed: API keys are refused
+("Cloud sessions need a claude.ai sign-in"), and the long-lived token from
+`claude setup-token` is "limited to inference only" — it cannot read sessions.
 
-| token | where it comes from | sent as |
-|---|---|---|
-| `sk-ant-oat…` | `claude setup-token`, run **once, on any machine** — a long-lived OAuth token | `Authorization: Bearer` + `anthropic-beta: oauth-2025-04-20` |
-| `sk-ant-sid…` | your claude.ai browser session: the `sessionKey` cookie, plus `--org <organization uuid>` | `Cookie: sessionKey=…` + `X-Organization-Uuid` |
+So "no Claude Code" means "Claude Code once, anywhere, to log in":
 
-The second needs no Claude Code anywhere, ever. It is also your login, so treat
-it like a password: it is short-lived, it is never printed, and it never goes
-in a file you'd commit. The first is the cleaner long-term choice if you can
-run the CLI once somewhere.
+```sh
+claude login                                   # once, on any machine that can run it
+# the token is now in ~/.claude/.credentials.json -> claudeAiOauth.accessToken
+python3 fetch_events.py --token-file ~/.claude/.credentials.json --list
+```
 
-Both the token and the organisation uuid are yours to supply; the script reads
-`CLAUDE_SESSIONS_TOKEN` (or `--token-file`) and `CLAUDE_CODE_ORGANIZATION_UUID`
-(or `--org`) and otherwise handles no credentials. It makes no connection to
-anything but `api.anthropic.com`.
+or copy that `accessToken` value to the watching machine and `export
+CLAUDE_SESSIONS_TOKEN=sk-ant-oat...`. After that no Claude Code is involved. The
+token expires — the CLI refreshes it silently, a copied one does not — so when
+`fetch_events.py` starts reporting 401, copy it again.
+
+Session ids are accepted as `session_…` or `cse_…`; the script tries the other
+form on a 404, as the CLI does.
+
+What does *not* work, so you don't spend an evening on it: API keys, `claude
+setup-token` tokens, the per-routine `/fire` token (write-only), and the session
+JWTs inside a cloud container. A `sk-ant-sid` browser cookie is accepted on the
+off chance, but nothing in the bundle sends one on these routes — unverified.
+
+Nothing here is documented by Anthropic. The routes are reconstructed from the
+Claude Code binary and corroborated by an independent unofficial reference that
+exercised them live; treat them as private and liable to change.
 
 ## Claude as the transport
 

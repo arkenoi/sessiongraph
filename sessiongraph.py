@@ -305,6 +305,13 @@ class SessionGraph:
         """
         if not isinstance(rec, dict):
             return None
+        # The REST events route wraps each record: {payload, created_at, source,
+        # sequence_num}. Unwrap, keeping the envelope's timestamp as a fallback.
+        if isinstance(rec.get("payload"), dict) and "type" not in rec:
+            inner = dict(rec["payload"])
+            inner.setdefault("timestamp", rec.get("created_at"))
+            inner.setdefault("created_at", rec.get("created_at"))
+            return SessionGraph.normalize(inner)
         if rec.get("type") in ("assistant", "user"):
             return rec                                   # already local shape
         for role in ("assistant", "user"):
