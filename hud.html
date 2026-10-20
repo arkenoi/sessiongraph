@@ -793,7 +793,8 @@ function expire(){
   // ranked by their own last touch: containers and partners that were only ever
   // implied by structure are kept through what they hold, not on their own
   const ranked = things.filter(p => p.lastOwn > -1e8).sort((a,b) => b.lastOwn - a.lastOwn);
-  const keep = new Set(ranked.slice(0, KEEP).map(p => p.id));
+  const room = document.body.classList.contains('focus') ? 2 : 1;   // full screen holds twice the universe
+  const keep = new Set(ranked.slice(0, KEEP * room).map(p => p.id));
   for (let pass = 0; pass < 3; pass++)              // containers, instruments and hubs of kept things; their partners
     for (const e of EDGES.values()){
       const a = ENT.get(e.src), b = ENT.get(e.dst); if (!a || !b) continue;
@@ -917,6 +918,10 @@ function setFocus(on){
   if (on && document.fullscreenEnabled && !document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
   if (!on && document.fullscreenElement) document.exitFullscreen().catch(() => {});
   C = fit(cv); keyW = 0; dirty = true;
+  if (on && mode === 'live'){                       // the bigger universe: refill it from the session, quietly, in place
+    for (const p of ENT.values()) POS.set(p.id, {x:p.x, y:p.y});
+    ENT.clear(); EDGES.clear(); ptr = 0;
+  }
 }
 $('fsbtn').addEventListener('click', ev => { ev.stopPropagation(); setFocus(!document.body.classList.contains('focus')); });
 $('fsbtn').addEventListener('mousedown', ev => ev.stopPropagation());
