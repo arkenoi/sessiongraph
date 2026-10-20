@@ -833,7 +833,8 @@ function degrees(){
 }
 function prune(){
   if (ENT.size <= MAXN) return;
-  const leaves = [...ENT.values()].filter(p => p.deg <= 1 && p.id !== MAIN && p.type !== 'agent')
+  // only what is already on its way out: a kept leaf (a gate's target, a running VM) is never cut
+  const leaves = [...ENT.values()].filter(p => p.expiring && p.deg <= 1 && p.id !== MAIN && p.type !== 'agent')
                                   .sort((a,b) => a.last - b.last);
   for (const p of leaves.slice(0, ENT.size - MAXN)){
     POS.set(p.id, {x:p.x, y:p.y}); ENT.delete(p.id);
