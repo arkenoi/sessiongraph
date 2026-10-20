@@ -97,7 +97,7 @@
   .ev.fresh{animation:flash 2.4s ease-out}
   @keyframes flash{0%{background:rgba(34,102,196,.16);border-left-color:var(--c-agent)}
                    100%{background:transparent;border-left-color:transparent}}
-  .ev.err.fresh{animation:flashbad 3s ease-out}                 /* a failure arrives red */
+  .ev.err.fresh{animation:flashbad 5s ease-out}                 /* a failure arrives red */
   @keyframes flashbad{0%{background:rgba(198,47,47,.30);border-left-color:var(--bad)}
                       100%{background:transparent;border-left-color:var(--bad)}}
 
@@ -899,8 +899,9 @@ function physics(ref){
 // the glow fades even when the layout is frozen: a white hit for ~150 ms, then
 // an afterglow in the hue over ~1.5 s; the clean-evaluation ring drifts out
 function glowTick(){
-  for (const p of ENT.values()){ p.flash = Math.max(0, p.flash - 0.011); p.ok = Math.max(0, (p.ok||0) - 0.012); }
-  for (const e of EDGES.values()) e.flash = Math.max(0, (e.flash||0) - 0.02);
+  // a failure lingers: ~1 s red hit, ~4 s afterglow, ~3 s on its edges (a plain flash: ~0.15 s, ~1.5 s, ~0.8 s)
+  for (const p of ENT.values()){ p.flash = Math.max(0, p.flash - (p.flashBad ? 0.004 : 0.011)); p.ok = Math.max(0, (p.ok||0) - 0.012); }
+  for (const e of EDGES.values()) e.flash = Math.max(0, (e.flash||0) - (e.bad ? 0.006 : 0.02));
 }
 
 // ---------------------------------------------------------------- field ----
@@ -1086,7 +1087,7 @@ function drawStream(now){
     }
     const sc = ghost ? mixHex(col, CHROME, 1 - f/0.3) : col;        // stroke colour
     if (p.flash > 0 && !reduce && !dying){                          // phosphor: a white hit, then an afterglow in the hue
-      const white = p.flash > 0.9, fc = p.flashBad ? BAD : null;   // a failure: a red hit, a red afterglow, wider
+      const fc = p.flashBad ? BAD : null, white = p.flash > (fc ? 0.75 : 0.9);   // a failure: a red hit, a red afterglow, wider
       ctx.fillStyle = white ? hexA(fc || CORE, 0.85) : hexA(fc || col, (fc ? 0.45 : 0.3)*p.flash);
       ctx.beginPath(); ctx.arc(p.x, p.y, r + (white ? (fc ? 5 : 3) : (fc ? 3 + 14*p.flash : 2 + 9*p.flash)), 0, 7); ctx.fill();
     }
@@ -1094,7 +1095,7 @@ function drawStream(now){
       ctx.beginPath(); ctx.arc(p.x, p.y, r + 5 + bb*13, 0, 7); ctx.stroke(); }
     ctx.shadowColor = col; ctx.shadowBlur = ghost ? 0 : 6 + hot*18 + bb*18;
     if (ghost || vmProjected(p)) ctx.setLineDash([3, 3]);         // a projected state is drawn dashed
-    const iconCol = p.flash > 0.9 && !dying ? (p.flashBad ? BAD : CORE) : sc;
+    const iconCol = p.flash > (p.flashBad ? 0.75 : 0.9) && !dying ? (p.flashBad ? BAD : CORE) : sc;
     if (p.id === MAIN){
       ctx.fillStyle = 'rgba(15,23,34,.9)'; ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.fill();
     } else if (inst){                                 // instruments: rounded squares. Not things; they act
