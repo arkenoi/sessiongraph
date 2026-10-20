@@ -258,6 +258,10 @@ class Tailer:
             names = sorted(os.listdir(self.watch_dir))
         except OSError:
             return False
+        # Pages land newest-first (hist0001 is the latest), so ingest in time
+        # order, not file order: otherwise "now" is the oldest page and every
+        # result arrives before its call, leaving the call pending forever.
+        batch = []
         for name in names:
             if name.startswith("."):
                 continue
@@ -272,18 +276,22 @@ class Tailer:
             if self.seen_files.get(f) == sig:
                 continue
             self.seen_files[f] = sig
-            n = 0
             try:
-                with self.lock:
-                    for rec in iter_records(f):
-                        before = len(self.g.nodes)
-                        self._ingest_rec(rec)
-                        n += 1
+                recs = list(iter_records(f))
             except Exception as e:
                 print(f"dump {name}: {e}", file=sys.stderr)
                 continue
-            print(f"merged {name}: {n} records", file=sys.stderr)
+            batch.extend(recs)
+            print(f"merged {name}: {len(recs)} records", file=sys.stderr)
             changed = True
+        def when(rec):
+            norm = SessionGraph.normalize(rec) or rec
+            return (parse_ts(norm.get("timestamp")) or parse_ts(rec.get("created_at")) or 0,
+                    int(rec.get("sequence_num") or 0) if str(rec.get("sequence_num") or 0).isdigit() else 0)
+        batch.sort(key=when)
+        with self.lock:
+            for rec in batch:
+                self._ingest_rec(rec)
         return changed
 
     def start_stream(self, path):
