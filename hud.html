@@ -139,6 +139,7 @@
     <span id="dot" class="off"></span><span id="status">connecting</span>
     <canvas id="ekg" width="300" height="56" title="tool calls per 3s"></canvas>
     <span id="doing">waiting for the first record…</span>
+    <span class="meta" id="camp" title="where the campaign the agent launched is, by its log"></span>
     <span id="elapsed">—</span>
     <span class="meta" id="nowmeta" title="click to attach to another session"></span>
   </div>
@@ -193,14 +194,21 @@ const CLASS = {
 };
 const COLOR = {agent:'#2266c4', artifact:'#a35f00', world:'#bf336b'};
 const CHROME = '#66748a', CORE = '#0f1722';   // chrome grey and the ink hit; not hues
+// a VM's power state, as the agent last saw it: green up, grey down, world hue unknown
+const VM_UP = '#12855c', VM_DOWN = '#8d97a8';
+const vmState = p => p && p.type === 'vm' ? ((NODE.get(p.id) || p.n || {}).attrs || {}).vm_state : undefined;
+const vmProjected = p => p && p.type === 'vm' && !!((NODE.get(p.id) || p.n || {}).attrs || {}).vm_projected;
+const colorOf = p => { const s = vmState(p); return s === 'running' ? VM_UP : s === 'halted' ? VM_DOWN : COLOR[p.cls]; };
 const ROLE_ICON = new Set(['tool','log','test','doc','media','archive','ci','scratch']);
 const roleOf = n => (n && n.attrs && n.attrs.role) || '';
-const isInstrument = p => !!p && (p.instrument || p.type === 'prog' || p.type === 'command' || p.type === 'tool'
+// a gate: what every request of a kind passes through (dom0 on Qubes); drawn as a hub that lights per request
+const GATES = new Set(['host:dom0']), GATE_LEAVES = 6;
+const isInstrument = p => !!p && (p.instrument || GATES.has(p.id) || p.type === 'prog' || p.type === 'command' || p.type === 'tool'
                                   || (p.type === 'file' && roleOf(p.n) === 'tool'));
 // what may act as an instrument when it is the source of a link: a program, or a
 // file the agent runs (role tool, or no role known). A search or a repo as source
 // is structure the parser spelled as a link; it stays a thing.
-const canAct = p => !!p && (p.type === 'prog' || p.type === 'command' || p.type === 'tool'
+const canAct = p => !!p && (GATES.has(p.id) || p.type === 'prog' || p.type === 'command' || p.type === 'tool'
                             || (p.type === 'file' && ['tool', ''].includes(roleOf(p.n))));
 const isHubLike = p => !!p && (p.type === 'agent' || isInstrument(p));
 const mixHex = (h1, h2, t) => { const a = parseInt(h1.slice(1),16), b = parseInt(h2.slice(1),16), m = v => Math.round(v);
@@ -266,11 +274,8 @@ function apply(s){
   NODE = new Map(s.nodes.map(n => [n.id, n]));
   EV = (s.state.events||[]).filter(e => e.ts).sort((x,y) => x.ts - y.ts);
   buildFlow(s);
-  if (first && !booted){
-    booted = true;
-    const span = (s.state.t_end||0) - (s.state.t_start||0);
-    if (span > 60 && !reduce) startReplay(); else paintChrome();
-  }
+  if (first && !booted){ booted = true; paintChrome(); }   // open live; R replays on demand
+  dirty = true;                                            // VM states may have changed
   if (mode === 'live') paintChrome();
 }
 
@@ -320,7 +325,16 @@ function statsAt(ref){
     cache:(reads+writes) ? reads/(reads+writes)*100 : null};
 }
 let seenEv = new Set();
+function paintCampaign(){
+  const c = snap && snap.state.campaign, el = $('camp');
+  if (!c){ el.textContent = ''; return; }
+  if (c.over){ el.textContent = 'campaign over'; el.title = c.basis; return; }
+  el.innerHTML = `campaign: <b>${esc(c.phase)}</b>` + (c.vm ? ` on <b style="color:${VM_UP}">${esc(c.vm)}</b>` : '')
+               + `<br>${c.how === 'projected' ? 'projected' : 'seen'} since ${clock(c.since).slice(0,5)}`;
+  el.title = c.basis;
+}
 function paintChrome(){
+  paintCampaign();
   if (!snap) return;
   const s = snap, st = s.state, ref = refTime(), replay = mode !== 'live';
   const A = replay ? statsAt(ref) : null;
@@ -665,7 +679,10 @@ function touch(p, ref, verb, e, o){
     if (e.outcome === 'ok' && verb === 'evaluate') p.ok = 1;      // the quiet confirmation
   }
 }
-const labelOf = p => p.id === MAIN ? 'agent' : p.id === SUB ? 'subagents' : String(p.n.label);
+// two different files with one name read as a duplicate: name them by their folder too
+const parentOf = p => { const parts = String(p.id).split(':').slice(1).join(':').split('/'); return parts[parts.length-2] || ''; };
+const labelOf = p => p.id === MAIN ? 'agent' : p.id === SUB ? 'subagents'
+  : (p.type === 'file' && DUPS.has(String(p.n.label)) ? parentOf(p) + '/' : '') + String(p.n.label);
 function remember(S, P, verb){                      // the last few things that happened here, for the tooltip
   const h = {src: labelOf(S), dst: labelOf(P), verb};
   for (const q of [S, P]){ q.hist.push(h); if (q.hist.length > 8) q.hist.shift(); }
@@ -685,7 +702,9 @@ function link(src, dst, type, ref, extra){
 // the actor ran; dst is what was acted on. Tools are not things: no tool:* node.
 const isActor = s => s == null || s === 'agent' || String(s).startsWith('tool:');
 function feed(e){
-  const ref = refTime();
+  // the event's own time, not the head's: a backlog fed in one frame (opening
+  // live) must keep its order, or every thing ties on recency and the oldest win
+  const ref = Math.min(refTime(), e.ts || Infinity);
   const agentId = e.sidechain ? SUB : MAIN;
   const A = ensure(agentId, ref); touch(A, ref);
   if (e.sidechain){ ensure(MAIN, ref); link(MAIN, SUB, 'SPAWNED', ref); }
@@ -718,6 +737,10 @@ function feed(e){
     }
     const P = ensure(d, ref, verb, S);
     touch(P, ref, verb, e, {fail, share});
+    if (GATES.has(srcId)){                                       // what the gate did last, and to whom lately
+      S.lastReq = {verb, dst: d, t: ref};
+      S.reqs = [d, ...(S.reqs || []).filter(x => x !== d)].slice(0, GATE_LEAVES);
+    }
     link(srcId, d, 'TOUCH', ref, {verb, tool:e.tool});
     if (verb === 'against' || verb === 'call'){      // a call to a service: count it, keep what it answered
       P.calls = (P.calls||0) + 1;
@@ -770,6 +793,9 @@ function expire(){
       if (keep.has(b.id) && holder(a)) keep.add(a.id);
       if (keep.has(a.id) && PARTNERED.has(e.type)) keep.add(b.id);
     }
+  for (const p of things) if (mode === 'live' && vmState(p) === 'running') keep.add(p.id);
+  for (const id of GATES) { const g = ENT.get(id);              // a kept gate keeps the leaves of its recent requests
+    if (g && keep.has(id)) for (const d of (g.reqs || [])) if (ENT.has(d)) keep.add(d); }
   for (const p of things) p.expiring = !keep.has(p.id);
 }
 function retire(p){
@@ -788,9 +814,20 @@ function pump(ref){
   lastRefSeen = ref;
   let fed = 0;
   while (ptr < EV.length && EV[ptr].ts <= ref){ feed(EV[ptr]); ptr++; fed++; }
+  if (snap && mode === 'live')                       // a running VM is on the field whether or not it was touched lately
+    for (const n of snap.nodes) if (n.type === 'vm' && (n.attrs||{}).vm_state === 'running' && !ENT.has(n.id)){ ensure(n.id, ref); dirty = true; }
+  if (mode === 'live')                               // and it is current: up close and labelled, not a dot at the rim
+    for (const p of ENT.values()) if (vmState(p) === 'running') p.last = Math.max(p.last, ref);
+  for (const id of GATES){                           // a gate's leaves sit by it, not out at the rim
+    const g = ENT.get(id); if (!g) continue;
+    for (const d of (g.reqs || [])){ const q = ENT.get(d); if (q) q.last = Math.max(q.last, g.last - 1); }
+  }
   if (fed || dirty){ linkStructure(ref); degrees(); expire(); prune(); dirty = false; }
 }
+let DUPS = new Set();                                // file names more than one body on the field carries
 function degrees(){
+  const seen = new Set(); DUPS = new Set();
+  for (const p of ENT.values()) if (p.type === 'file'){ const l = String(p.n.label); (seen.has(l) ? DUPS : seen).add(l); }
   for (const p of ENT.values()) p.deg = 0;
   for (const e of EDGES.values()){ const a = ENT.get(e.src), b = ENT.get(e.dst); if (a) a.deg++; if (b) b.deg++; }
 }
@@ -894,7 +931,7 @@ function drawGlyphKey(){
   };
   for (const [lab, dir] of [['← in', -1], ['↔ both', 0], ['→ out', 1]])      // what came back, both ways, what went out
     flow(lab, x0, VERBS.filter(v => (VERB_DIR[v] ?? 0) === dir).map(v => ({v})), it => 11 + mw(it.v) + pad);
-  const KIND = [['#a35f00','artifacts'],['#2266c4','agent · instruments'],['#bf336b','world']];
+  const KIND = [['#a35f00','artifacts'],['#2266c4','agent · instruments'],['#bf336b','world'],[VM_UP,'vm up'],[VM_DOWN,'vm off']];
   flow('', 10, [...KIND.map(([c,t]) => ({swatch:c, t})), {text:'agent → instrument → thing · folder ⊃ file · size = burn · ×n = returns'}],
        it => it.swatch ? 13 + mw(it.t) + 16 : mw(it.text) + pad);
   const H = lines.length*rh + 6;
@@ -973,12 +1010,14 @@ function drawStream(now){
     const a = ENT.get(e.src), b = ENT.get(e.dst); if (!a || !b) continue;
     const hot = Math.max(a.prox||0, b.prox||0), fresh = e.flash || 0;
     const L = Math.hypot(b.x-a.x, b.y-a.y);
-    const far = L < 60 ? 1 : L > 220 ? 0.3 : 1 - 0.7*(L-60)/160;        // long edges fade
+    const gateEdge = GATES.has(e.src) && e.type === 'TOUCH';            // a request through the gate: always legible
+    const far = gateEdge || L < 60 ? 1 : L > 220 ? 0.3 : 1 - 0.7*(L-60)/160;        // long edges fade
     const fab = Math.min(a.fade, b.fade), fade = fab * far;
     let col, alpha, width;
     if (e.type === 'CONTAINS' || e.type === 'IN_REPO'){ col = COLOR[b.cls === 'agent' ? a.cls : b.cls]; alpha = 0.2 + 0.28*hot; width = 1; }
     else if (e.type === 'USED'){ col = COLOR.agent; alpha = 0.14 + 0.42*hot + 0.4*fresh; width = 1 + 0.8*Math.log2(1+e.w); }
-    else if (e.type === 'TOUCH'){ col = COLOR[b.cls]; alpha = 0.16 + 0.46*hot + 0.42*fresh; width = 1 + 0.9*Math.log2(1+e.w); }
+    else if (e.type === 'TOUCH'){ col = gateEdge ? colorOf(b) : COLOR[b.cls]; alpha = Math.max(gateEdge ? 0.5 : 0, 0.16 + 0.46*hot + 0.42*fresh);
+                                  width = 1 + 0.9*Math.log2(1+e.w); }
     else { col = COLOR[b.cls]; alpha = 0.16 + 0.36*hot; width = 1; }
     ctx.lineWidth = width + 2.8; ctx.strokeStyle = hexA(col, alpha*0.26*fade); edgePath(ctx, e, a, b); ctx.stroke();
     ctx.lineWidth = Math.max(1, width*0.8); ctx.strokeStyle = hexA(col, alpha*0.9*fade); edgePath(ctx, e, a, b); ctx.stroke();
@@ -1017,10 +1056,11 @@ function drawStream(now){
   const boxes = [];                                 // text plates placed so far (labels and ×n counts)
   const discs = ents.filter(p => !(p.expiring && p.fade < 0.12)).map(p => ({id:p.id, x:p.x, y:p.y, r:p.rad||9}));
   for (const p of ents){
-    const hot = p.prox != null ? p.prox : 1, col = COLOR[p.cls];
+    const hot = p.prox != null ? p.prox : 1, col = colorOf(p);
     const inst = isInstrument(p), isHub = p.type === 'agent' || inst;
-    const base = isHub ? 8 + 14*Math.sqrt(p.touches/maxUse) : 6 + 20*Math.sqrt((p.burn||0)/maxBurn);
-    const act = running.has(p.id) || p.flash > 0.25;
+    const upVm = mode === 'live' && vmState(p) === 'running';
+    const base = isHub ? 8 + 14*Math.sqrt(p.touches/maxUse) : Math.max(upVm ? 11 : 0, 6 + 20*Math.sqrt((p.burn||0)/maxBurn));
+    const act = running.has(p.id) || p.flash > 0.25 || upVm;
     const bb = act && !reduce ? (Math.sin(now/170 + p.seed)+1)/2 : 0;
     const breathe = reduce ? 0 : Math.sin(now/560 + p.seed)*0.03*hot;
     const r = base * (0.3 + 0.7*p.grow) * (1 + breathe + bb*0.17);
@@ -1044,7 +1084,7 @@ function drawStream(now){
     if (act && !reduce && !dying){ ctx.strokeStyle = hexA(col, 0.5*(1-bb)); ctx.lineWidth = 1.6;
       ctx.beginPath(); ctx.arc(p.x, p.y, r + 5 + bb*13, 0, 7); ctx.stroke(); }
     ctx.shadowColor = col; ctx.shadowBlur = ghost ? 0 : 6 + hot*18 + bb*18;
-    if (ghost) ctx.setLineDash([3, 3]);
+    if (ghost || vmProjected(p)) ctx.setLineDash([3, 3]);         // a projected state is drawn dashed
     const iconCol = p.flash > 0.9 && !dying ? CORE : sc;
     if (p.id === MAIN){
       ctx.fillStyle = 'rgba(15,23,34,.9)'; ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.fill();
@@ -1093,7 +1133,11 @@ function drawStream(now){
     ctx.restore();
     if (!showLabel) continue;
 
-    const txt = p.id === MAIN ? 'agent' : String(p.n.label).slice(0,28) + (inst ? ' ×'+p.touches : '');
+    const vs = vmState(p);
+    const req = GATES.has(p.id) && p.lastReq && ENT.get(p.lastReq.dst);
+    const txt = p.id === MAIN ? 'agent' : (p.type === 'file' ? String(labelOf(p)).slice(-34) : String(labelOf(p)).slice(0,28)) + (inst ? ' ×'+p.touches : '')
+                + (req ? ' · ' + p.lastReq.verb + ' ' + String(labelOf(req)).slice(0,22) : '')
+                + (vs === 'running' ? ' · up' : vs === 'halted' ? ' · off' : '') + (vs && vmProjected(p) ? '?' : '');
     ctx.font = (isHub ? 'bold ' : '') + '13px ui-monospace,monospace';
     const tw = ctx.measureText(txt).width, ly = p.y + 4;
     const place = right => { const lx = right ? p.x + r + 9 : p.x - r - 9;
@@ -1146,7 +1190,10 @@ cv.addEventListener('mousemove', ev => {
     if (e.src === best.id && ENT.get(e.dst)) nb.push(`${SAY[e.type][0]} ${labelOf(ENT.get(e.dst))}`);
     else if (e.dst === best.id && ENT.get(e.src)) nb.push(`${SAY[e.type][1]} ${labelOf(ENT.get(e.src))}`);
   }
-  tip.innerHTML = `<div class="h" style="color:${COLOR[best.cls]}">${kind} · ${esc(labelOf(best))}</div>`+
+  const va = best.type === 'vm' ? ((NODE.get(best.id) || best.n || {}).attrs || {}) : {};
+  tip.innerHTML = `<div class="h" style="color:${colorOf(best)}">${kind} · ${esc(labelOf(best))}</div>`+
+    (va.vm_state ? `<div class="r" style="color:${colorOf(best)}">${va.vm_state}${va.vm_projected ? ' (projected)' : ''} · ${va.vm_projected ? 'since' : 'seen'} ${clock(va.vm_ts)} · ${esc(va.vm_why)}</div>`
+                 : best.type === 'vm' ? `<div class="r" style="color:var(--ink-3)">state not observed</div>` : '')+
     `<div class="r">${best.touches} touch(es) · ${best.deg} link(s)` + (best.burn ? ` · burned ${fmtUsd(best.burn)}` : '') + `</div>`+
     (best.last > -1e8 ? `<div class="r">last ${age<90?age.toFixed(0)+'s':fmtDur(age)} ago${best.verb?' · '+esc(best.verb):''}</div>` : '')+
     (best.target ? `<div class="r">${esc(String(best.target).slice(0,90))}</div>` : '')+
