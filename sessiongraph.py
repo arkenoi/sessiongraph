@@ -188,6 +188,13 @@ class SessionGraph:
             inner.setdefault("created_at", rec.get("created_at"))
             return SessionGraph.normalize(inner)
         if rec.get("type") in ("assistant", "user"):
+            wic = rec.get("wire_ingest_context")         # the REST route's records: the call's cwd lives here
+            if not rec.get("cwd") and isinstance(wic, dict):
+                cwd = next((v.get("cwd") for v in wic.values() if isinstance(v, dict) and v.get("cwd")), None)
+                if cwd:
+                    rec = {**rec, "cwd": cwd}
+            if not rec.get("sessionId") and rec.get("session_id"):
+                rec = {**rec, "sessionId": rec["session_id"]}
             return rec                                   # already local shape
         for role in ("assistant", "user"):
             body = rec.get(role)
@@ -336,7 +343,7 @@ class SessionGraph:
         sid = rec.get("sessionId") or "?"
         k = self.known_by_session.get(sid)
         if k is None:
-            k = self.known_by_session[sid] = {"vm": set(), "host": set(), "service": set()}
+            k = self.known_by_session[sid] = {"vm": set(), "host": set(), "service": set(), "copies": {}}
         return k
 
     def _vocab_for(self, cwd):
