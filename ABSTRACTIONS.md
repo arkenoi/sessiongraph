@@ -135,9 +135,13 @@ the `cwd` the transcript names, so it only works where that tree exists.
 A third section, `results`, catches instruments that ran without being on
 the command line (a hook, a pre-commit gate): when a tool result matches
 `pattern` on a call that wrote, edited or committed something, the named
-instrument gets `—verb→` those things (and `—against→` if given), and
-`score` (a regex with one group) is kept on the instrument as `last_score`.
-If the instrument *was* on the command line, only the score is kept.
+instrument gets `—verb→` those things (and `—against→` the API if given).
+`score` is a regex run over the whole result: one group gives a list of
+scores, two groups (`(\\w+) noul=([0-9.]+)`) give `{name: value}`. The
+scores land on the API node (`last_scores`, `n_calls`) and on the call, so
+the HUD can show each call to the API going out and its answer coming
+back, with the span of scores under the API. If the instrument *was* on
+the command line, the rule only adds the call and its scores.
 
 ```json
 { "results": [

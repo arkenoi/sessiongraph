@@ -591,8 +591,8 @@ const EDGES = new Map();          // "src>dst>type" -> edge
 const POS = new Map();            // id -> {x,y}: positions survive rebuilds
 const MAIN = 'agent:main', SUB = 'agent:subagent';
 let ptr = 0, lastRefSeen = null, ZOOM = 1, dirty = false;
-let KEEP = 32;                    // how many things the universe holds; the rest expire (- / = to change)
-const MAXN = 170;                 // hard cap, in case KEEP's containers pile up
+let KEEP = 16;                    // how many things the universe holds; the rest expire (- / = to change)
+const MAXN = 90;                  // hard cap, in case KEEP's containers pile up
 
 const REST = {CONTAINS:40, USED:118, SPAWNED:110, YIELDED:70, IN_REPO:56, MENTIONS:95, TOUCH:96, AGAINST:80, REMOTE:70};
 const PARTNERED = new Set(['IN_REPO', 'REMOTE', 'AGAINST']);   // src appears, then its partner (dst)
@@ -713,6 +713,10 @@ function feed(e){
     const P = ensure(d, ref, verb, S);
     touch(P, ref, verb, e, {fail, share});
     link(srcId, d, 'TOUCH', ref, {verb, tool:e.tool});
+    if (verb === 'against' || verb === 'call'){      // a call to a service: count it, keep what it answered
+      P.calls = (P.calls||0) + 1;
+      if (e.scores && (e.api == null || e.api === d)) P.scores = e.scores;
+    }
     remember(S, P, verb);
   }
 }
@@ -974,8 +978,16 @@ function drawStream(now){
       const q = along(e, a, b, 0.7); head(ctx, q.x, q.y, q.ang, col, 0.35*fade, 4);
     }
     if (fresh > 0.02 && !reduce && e.type !== 'CONTAINS'){   // a packet along a fresh edge
-      const q = along(e, a, b, 1 - fresh);
-      ctx.fillStyle = hexA(CORE, fresh*0.9); ctx.beginPath(); ctx.arc(q.x, q.y, 2.4 + fresh*2.4, 0, 7); ctx.fill();
+      if (e.type === 'TOUCH' && (e.verb === 'against' || e.verb === 'call')){
+        // a call: the request goes out, then the answer comes back in the service's own hue
+        const out = fresh > 0.5, t = out ? (1 - fresh)*2 : fresh*2, q = along(e, a, b, t);
+        ctx.fillStyle = out ? hexA(CORE, 0.9) : hexA(col, 0.95);
+        ctx.beginPath(); ctx.arc(q.x, q.y, out ? 2.6 : 3.4, 0, 7); ctx.fill();
+        if (!out){ ctx.strokeStyle = hexA(col, 0.5); ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(q.x, q.y, 6 + (0.5-fresh)*10, 0, 7); ctx.stroke(); }
+      } else {
+        const q = along(e, a, b, 1 - fresh);
+        ctx.fillStyle = hexA(CORE, fresh*0.9); ctx.beginPath(); ctx.arc(q.x, q.y, 2.4 + fresh*2.4, 0, 7); ctx.fill();
+      }
     }
   }
   ctx.globalCompositeOperation = 'source-over';
@@ -1046,8 +1058,20 @@ function drawStream(now){
     }
     if (p.touches > 1 && !isHub && showLabel){        // ×n: a plate like any other, so it never sits on a name
       ctx.font = 'bold 12px ui-monospace,monospace'; ctx.textAlign = 'center';
-      const nt = '×'+p.touches, nw = ctx.measureText(nt).width, nb = [p.x-nw/2-2, p.y+r+3, p.x+nw/2+2, p.y+r+17];
+      const nt = (p.calls ? '×'+p.calls+' calls' : '×'+p.touches), nw = ctx.measureText(nt).width, nb = [p.x-nw/2-2, p.y+r+3, p.x+nw/2+2, p.y+r+17];
       if (!boxes.some(b2 => overlap(nb, b2))){ boxes.push(nb); ctx.fillStyle = hexA(col, .95); ctx.fillText(nt, p.x, p.y + r + 14); }
+    }
+    if (p.scores && showLabel){                       // what the service answered last: the span of its scores
+      const vals = (Array.isArray(p.scores) ? p.scores : Object.values(p.scores)).filter(v => typeof v === 'number');
+      if (vals.length){
+        const lo = Math.min(...vals), hi = Math.max(...vals);
+        const st = vals.length > 1 ? `${lo.toFixed(2)}–${hi.toFixed(2)}` : hi.toFixed(2);
+        ctx.font = '12px ui-monospace,monospace'; ctx.textAlign = 'center';
+        const sw = ctx.measureText(st).width, sb = [p.x-sw/2-2, p.y+r+18, p.x+sw/2+2, p.y+r+32];
+        if (!boxes.some(b2 => overlap(sb, b2))){ boxes.push(sb);
+          ctx.fillStyle = 'rgba(8,13,24,.8)'; ctx.fillRect(sb[0], sb[1], sb[2]-sb[0], sb[3]-sb[1]);
+          ctx.fillStyle = hexA(lo < 0.6 ? '#e66767' : '#f2f6fb', .95); ctx.fillText(st, p.x, p.y + r + 29); }
+      }
     }
     ctx.restore();
     if (!showLabel) continue;
@@ -1110,6 +1134,9 @@ cv.addEventListener('mousemove', ev => {
     (best.last > -1e8 ? `<div class="r">last ${age<90?age.toFixed(0)+'s':fmtDur(age)} ago${best.verb?' · '+esc(best.verb):''}</div>` : '')+
     (best.target ? `<div class="r">${esc(String(best.target).slice(0,90))}</div>` : '')+
     hist.slice(0,6).map(x => `<div class="r">${esc(x)}</div>`).join('')+
+    (best.scores ? `<div class="r">${best.calls||1} call(s) · last answer:</div>` +
+      (Array.isArray(best.scores) ? [best.scores.join(' · ')] : Object.entries(best.scores).map(([k,v]) => `${k} ${typeof v==='number'?v.toFixed(2):v}`))
+        .slice(0,8).map(x => `<div class="r" style="color:var(--ink-3)">${esc(x)}</div>`).join('') : '')+
     nb.slice(0,3).map(x => `<div class="r" style="color:var(--ink-3)">${esc(x)}</div>`).join('')+
     (best.err ? `<div class="r" style="color:var(--bad)">last call failed</div>` : '');
   tip.style.display = 'block';

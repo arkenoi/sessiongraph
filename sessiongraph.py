@@ -589,7 +589,8 @@ class SessionGraph:
     def _result_rules(self, step, call, blob, rec):
         """Vocabulary `results` rules: text in a result that proves an instrument
         ran (a hook that graded the file just written, say) becomes
-        instrument —verb→ the call's things [—verb→ against]."""
+        instrument —verb→ the call's things, —against→ the API it called, and
+        the scores the API returned land on that API node and on the call."""
         out = []
         import fnmatch
         for rule in self._vocab_for(rec.get("cwd")).get("results", []):
@@ -599,38 +600,67 @@ class SessionGraph:
             except Exception:
                 continue
             name = rule.get("instrument", "hook")
-            score = re.search(rule["score"], blob[:20000]) if rule.get("score") else None
-            # the call already names the instrument on its command line: only keep its score
+            scores = self._scores(rule.get("score"), blob)
+            verb = rule.get("verb", "evaluate")
+            ag = rule.get("against")
+            # the call already names the instrument on its command line: it is the
+            # instrument node; otherwise the rule proves a hidden run of it
             explicit = [s for s, _, _ in call["links"]
                         if s != "agent" and fnmatch.fnmatch(self.nodes.get(s, {}).get("label", ""), name + "*")]
             if explicit:
-                if score:
-                    self.nodes[explicit[0]]["attrs"]["last_score"] = score.group(1)
-                continue
-            made = [d for s, d, v in call["links"] if v in ("write", "edit", "commit")]
-            if not made:                       # a tail of an old log is not a new evaluation
-                continue
-            inst = self.node("prog", name, label=name)
-            inst["touches"] += 1
-            verb = rule.get("verb", "evaluate")
-            self.edge(step["id"], inst["id"], "RAN")
-            # what it judged: the things this call made or committed
-            targets = [d for s, d, v in call["links"] if v in ("write", "edit", "commit")
-                       and self.nodes.get(d, {}).get("type") in ("file", "repo", "commit")][:3]
-            for t in targets:
-                self.edge(inst["id"], t, verb.upper(), via=True)
-                call["links"].append([inst["id"], t, verb])
-            ag = rule.get("against")
-            if ag and ":" in ag:
+                inst = self.nodes[explicit[0]]
+            else:
+                made = [d for s, d, v in call["links"] if v in ("write", "edit", "commit")]
+                if not made:                   # a tail of an old log is not a new evaluation
+                    continue
+                inst = self.node("prog", name, label=name)
+                inst["touches"] += 1
+                self.edge(step["id"], inst["id"], "RAN")
+                targets = [d for d in made if self.nodes.get(d, {}).get("type") in ("file", "repo", "commit")][:3]
+                for t in targets:
+                    self.edge(inst["id"], t, verb.upper(), via=True)
+                    call["links"].append([inst["id"], t, verb])
+                out.append(inst["id"])
+            # the API it called: from the rule, or from an `against` link already on the call
+            api_id = next((d for s, d, v in call["links"] if s == inst["id"] and v == "against"), None)
+            if not api_id and ag and ":" in ag:
                 k, _, key = ag.partition(":")
-                n = self.node(k, key, label=key)
-                self.edge(inst["id"], n["id"], "AGAINST")
-                call["links"].append([inst["id"], n["id"], verb])
-                out.append(n["id"])
-            out.append(inst["id"])
-            if score:
-                inst["attrs"]["last_score"] = score.group(1)
+                api_id = self.node(k, key, label=key)["id"]
+                self.edge(inst["id"], api_id, "AGAINST")
+                call["links"].append([inst["id"], api_id, "against"])
+                out.append(api_id)
+            if api_id:
+                api = self.nodes[api_id]
+                api["touches"] += 1
+                api["attrs"]["n_calls"] = api["attrs"].get("n_calls", 0) + 1
+                if scores:
+                    api["attrs"]["last_scores"] = scores
+                call["api"] = api_id
+            if scores:
+                inst["attrs"]["last_scores"] = scores
+                call["scores"] = scores
         return out
+
+    @staticmethod
+    def _scores(pattern, blob):
+        """Every score in a result: `noul=([0-9.]+)` gives [0.95, 0.85, …];
+        a two-group pattern ``(\\w+) noul=([0-9.]+)`` gives {name: value}."""
+        if not pattern:
+            return None
+        try:
+            ms = list(re.finditer(pattern, blob[:20000]))
+        except Exception:
+            return None
+        if not ms:
+            return None
+        def num(x):
+            try:
+                return float(x)
+            except Exception:
+                return x
+        if ms[0].re.groups >= 2:
+            return {m.group(1): num(m.group(2)) for m in ms[:12]}
+        return [num(m.group(1)) for m in ms[:12]]
 
     # --- output
     def to_dict(self):

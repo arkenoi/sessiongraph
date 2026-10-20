@@ -313,7 +313,8 @@ is the core; everything it touches sits around it:
   repo; an instrument sits between the agent and what it acted on (`qtest
   —capture→ win10-acc`, `jev —evaluate→ controls.txt —against→ api`); a
   search yields its URLs; a commit lands in its repo; the universe holds the
-  most recent few dozen things and lets the rest drift past the rim and fade.
+  sixteen most recent things (`-`/`=` to change) and lets the rest drift past
+  the rim and fade.
 - **How a thing arrives says what happened.** Something the agent *makes* — a
   write, a commit, a push, a spawn — is thrown out of the core and swells as it
   flies. Something that already existed and is only now *reached for* — a read, a

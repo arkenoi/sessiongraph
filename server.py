@@ -381,6 +381,7 @@ class Tailer:
             for c in d["calls"][-2000:]:
                 events.append({"tool": c["tool"], "target": describe(c, labels),
                                "raw": target_of(c["tool"], c.get("input")),
+                               "scores": c.get("scores"), "api": c.get("api"),
                                "ts": parse_ts(c.get("ts")), "bytes": c.get("result_bytes"),
                                "err": bool(c.get("is_error")), "nodes": c.get("nodes") or [],
                                "verb": c.get("verb") or "execute",
