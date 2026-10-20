@@ -4,10 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Session HUD</title>
+<link rel="icon" href="data:,">
 <style>
   :root{
     --surface-0:#070b14; --surface-1:#0d1526; --surface-2:#16233a;
-    --line:rgba(57,135,229,.32); --line-hot:rgba(57,135,229,.7);
+    --line:rgba(138,148,166,.22); --line-hot:rgba(138,148,166,.55); --chrome:#8a94a6;
     --ink:#f2f6fb; --ink-2:#b2c2d6; --ink-3:#8296ae;
     /* categorical: validated all-pairs on this surface (worst CVD dE 13.2) */
     --c-agent:#3987e5; --c-artifact:#c98500; --c-world:#d55181;
@@ -19,7 +20,7 @@
   body{
     margin:0; background:var(--surface-0); color:var(--ink); font-family:var(--mono);
     font-size:14px; overflow:hidden;
-    background-image:radial-gradient(ellipse at 50% -20%,rgba(57,135,229,.10),transparent 60%);
+    background-image:radial-gradient(ellipse at 50% -20%,rgba(138,148,166,.07),transparent 60%);
   }
   body::after{
     content:""; position:fixed; inset:0; pointer-events:none; z-index:50;
@@ -43,7 +44,7 @@
   .panel::before{top:-1px;left:-1px;border-right:0;border-bottom:0}
   .panel::after{bottom:-1px;right:-1px;border-left:0;border-top:0}
   .cap{
-    font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3);
+    font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3);
     padding:7px 10px 0; display:flex; justify-content:space-between; align-items:baseline;
   }
 
@@ -62,31 +63,31 @@
 
   #tiles{grid-area:tiles; display:grid; grid-template-columns:1fr 1fr; gap:10px; align-content:start; overflow:auto}
   .tile{padding:9px 10px 11px}
-  .tile .k{font-size:10.5px;letter-spacing:.12em;color:var(--ink-3);text-transform:uppercase}
+  .tile .k{font-size:12px;letter-spacing:.12em;color:var(--ink-3);text-transform:uppercase}
   .tile .v{font-size:26px;line-height:1.15;margin-top:5px;font-variant-numeric:tabular-nums}
-  .tile .s{font-size:11.5px;color:var(--ink-3);margin-top:2px}
+  .tile .s{font-size:12px;color:var(--ink-3);margin-top:2px}
   .tile.hero{grid-column:1/-1} .tile.hero .v{font-size:38px}
 
   #streamwrap{grid-area:stream; overflow:hidden}
   #cv{display:block;width:100%;height:100%;cursor:ew-resize}
   #bands{position:absolute;right:12px;top:9px;text-align:right;display:flex;flex-direction:column;gap:3px;
-         font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);pointer-events:none}
+         font-size:12px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);pointer-events:none}
   #bands i{display:inline-block;width:9px;height:9px;margin-right:6px;vertical-align:-1px}
   .sw-agent{background:var(--c-agent);border-radius:50%}
   .sw-art{background:var(--c-artifact);transform:rotate(45deg)}
   .sw-world{background:var(--c-world);clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
-  #hint{position:absolute;right:10px;bottom:7px;font-size:10.5px;color:var(--ink-3)}
-  #glyphs{position:absolute;left:10px;bottom:24px;width:740px;height:66px;pointer-events:none;opacity:.92}
-  #mode{position:absolute;left:10px;bottom:7px;font-size:11px;letter-spacing:.14em;
+  #hint{position:absolute;right:10px;bottom:7px;font-size:12px;color:var(--ink-3)}
+  #glyphs{position:absolute;left:10px;bottom:26px;width:870px;height:84px;pointer-events:none;opacity:.95}
+  #mode{position:absolute;left:10px;bottom:7px;font-size:12px;letter-spacing:.14em;
         text-transform:uppercase;color:var(--c-agent)}
 
   #feed{grid-area:feed; display:flex; flex-direction:column}
   #feedlist{overflow:auto;padding:4px 0 8px}
   .ev{display:flex;gap:8px;padding:3px 10px;align-items:baseline;border-left:2px solid transparent}
-  .ev .t{font-size:11px;color:var(--ink-3);width:54px;flex:none;font-variant-numeric:tabular-nums}
+  .ev .t{font-size:12px;color:var(--ink-3);width:62px;flex:none;font-variant-numeric:tabular-nums}
   .ev .n{font-size:13px;flex:none}
   .ev .g{font-size:12.5px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .ev .b{font-size:11px;color:var(--ink-3);margin-left:auto;flex:none}
+  .ev .b{font-size:12px;color:var(--ink-3);margin-left:auto;flex:none}
   .ev.err{border-left-color:var(--bad)} .ev.err .n{color:var(--bad)}
   .ev.fresh{animation:flash 2.4s ease-out}
   @keyframes flash{0%{background:rgba(57,135,229,.42);border-left-color:var(--c-agent)}
@@ -106,10 +107,10 @@
         padding:8px 10px;border:1px solid var(--line);margin-bottom:6px;cursor:pointer;background:var(--surface-1)}
   .sess:hover{border-color:var(--line-hot);background:var(--surface-2)}
   .sess.on{border-color:var(--good)}
-  .sess .id{font-size:11px;color:var(--c-agent)}
+  .sess .id{font-size:12px;color:var(--c-agent)}
   .sess .ti{font-size:12px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .sess .sub{font-size:10px;color:var(--ink-3)}
-  .sess .rt{font-size:10px;color:var(--ink-3);text-align:right;white-space:nowrap;
+  .sess .sub{font-size:12px;color:var(--ink-3)}
+  .sess .rt{font-size:12px;color:var(--ink-3);text-align:right;white-space:nowrap;
             font-variant-numeric:tabular-nums}
   #nowmeta{cursor:pointer}
   #nowmeta:hover{color:var(--ink-2)}
@@ -117,7 +118,7 @@
          background:#050810;border:1px solid var(--line-hot);padding:16px}
   table{border-collapse:collapse;width:100%;font-size:12px}
   th,td{text-align:left;padding:4px 10px;border-bottom:1px solid var(--line)}
-  th{color:var(--ink-3);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase}
+  th{color:var(--ink-3);font-size:12px;letter-spacing:.12em;text-transform:uppercase}
   td.num{text-align:right;font-variant-numeric:tabular-nums}
   @media (prefers-reduced-motion:reduce){#dot.on{animation:none}.ev.fresh{animation:none}body::after{display:none}}
   @media (max-width:1000px){
@@ -154,7 +155,7 @@
 
   <div class="panel" id="streamwrap">
     <canvas id="cv"></canvas>
-        <canvas id="glyphs" width="1480" height="132"></canvas>
+        <canvas id="glyphs" width="1740" height="168"></canvas>
     <div id="mode">live</div>
     <div id="hint">drag scrub · wheel zoom · - / = universe size · S sessions · R replay · T table · space freeze</div>
   </div>
@@ -175,12 +176,30 @@
 
 <script>
 // ---------------------------------------------------------------- model ----
+// Three hues, locked: blue = who acts (and what it acts through), amber = what is
+// made, magenta = the world beyond the working tree. Chrome is grey (CHROME).
 const CLASS = {
-  step:'agent', session:'agent', tool:'agent', command:'agent', skill:'agent', agent:'agent', mcp:'agent',
+  agent:'agent', prog:'agent', skill:'agent', mcp:'agent',
+  step:'agent', session:'agent', tool:'agent', command:'agent',          // older wire formats
   file:'artifact', dir:'artifact', repo:'artifact', commit:'artifact',
-  url:'world', domain:'world', gh_repo:'world', search:'world', pr:'world', issue:'world'
+  vm:'world', host:'world', service:'world', api:'world', url:'world', domain:'world', search:'world',
+  gh_repo:'world', pr:'world', issue:'world', run:'world', process:'world', package:'world'
 };
 const COLOR = {agent:'#3987e5', artifact:'#c98500', world:'#d55181'};
+const CHROME = '#8a94a6', CORE = '#e8f0ff';   // chrome grey and the phosphor hit; not hues
+const ROLE_ICON = new Set(['tool','log','test','doc','media','archive','ci','scratch']);
+const roleOf = n => (n && n.attrs && n.attrs.role) || '';
+const isInstrument = p => !!p && (p.instrument || p.type === 'prog' || p.type === 'command' || p.type === 'tool'
+                                  || (p.type === 'file' && roleOf(p.n) === 'tool'));
+// what may act as an instrument when it is the source of a link: a program, or a
+// file the agent runs (role tool, or no role known). A search or a repo as source
+// is structure the parser spelled as a link; it stays a thing.
+const canAct = p => !!p && (p.type === 'prog' || p.type === 'command' || p.type === 'tool'
+                            || (p.type === 'file' && ['tool', ''].includes(roleOf(p.n))));
+const isHubLike = p => !!p && (p.type === 'agent' || isInstrument(p));
+const mixHex = (h1, h2, t) => { const a = parseInt(h1.slice(1),16), b = parseInt(h2.slice(1),16), m = v => Math.round(v);
+  const r = m((a>>16&255)*(1-t) + (b>>16&255)*t), g = m((a>>8&255)*(1-t) + (b>>8&255)*t), bl = m((a&255)*(1-t) + (b&255)*t);
+  return '#' + ((r<<16)|(g<<8)|bl).toString(16).padStart(6,'0'); };
 const reduce = matchMedia('(prefers-reduced-motion:reduce)').matches;
 const GAPC = 5;        // seconds of silence the stream will actually travel through
 const ROWH = 15;       // channel height
@@ -331,8 +350,9 @@ function paintChrome(){
   num('t-steps', replay?A.turns:(t.steps||0), v=>String(Math.round(v)));
   $('t-steps-s').textContent = (t.prompts||0)+' prompts';
   num('t-tools', EV.filter(e=>e.ts<=ref).length, v=>String(Math.round(v)));
-  const top = (s.nodes||[]).filter(n=>n.type==='tool').sort((a,b)=>(b.attrs.n_calls||0)-(a.attrs.n_calls||0))[0];
-  $('t-tools-s').textContent = top ? 'top: '+top.label+'×'+top.attrs.n_calls : '';
+  const cnt = {}; for (const e of EV) if (e.ts <= ref) cnt[e.tool] = (cnt[e.tool]||0) + 1;
+  const top = Object.entries(cnt).sort((a,b) => b[1]-a[1])[0];
+  $('t-tools-s').textContent = top ? 'top: '+top[0]+'×'+top[1] : '';
 
   const vis = EV.filter(e => e.ts <= ref).slice(-26);
   $('feedlist').innerHTML = vis.slice().reverse().map(e => {
@@ -370,25 +390,70 @@ function drawEkg(){
     ex.fillStyle = `rgba(57,135,229,${0.3+0.7*Math.exp(-age/60)})`;
     ex.fillRect(i*bw, h-bh-2, Math.max(1.5,bw-1.5), bh);
   }
-  ex.strokeStyle='rgba(57,135,229,.25)'; ex.beginPath(); ex.moveTo(0,h-1.5); ex.lineTo(w,h-1.5); ex.stroke();
+  ex.strokeStyle='rgba(138,148,166,.28)'; ex.beginPath(); ex.moveTo(0,h-1.5); ex.lineTo(w,h-1.5); ex.stroke();
 }
 
 
 // ------------------------------------------------------------- glyphs ----
 // Colour says what kind of thing; the glyph says what was done to it, and the
 // arrow on the link says which way the data went. Shared with the legend.
-const VERB_DIR = {read:-1, search:-1, fetch:-1, pull:-1, list:-1,
-                  write:1, edit:0, delete:1, push:1, commit:1,
-                  execute:0, spawn:1, skill:0, mcp:0, note:1};
-const VERBS = ['read','write','edit','execute','search','fetch','commit','push','pull','delete','spawn','skill','mcp'];
+const VERB_DIR = {read:-1, search:-1, watch:-1, probe:-1, fetch:-1, capture:-1, pull:-1, list:-1,
+                  extract:0, evaluate:0, run:0, call:0, edit:0, skill:0, mcp:0, execute:0,
+                  write:1, delete:1, commit:1, push:1, revert:1, build:1, install:1, launch:1, stop:1, spawn:1, note:1};
+// the key's order: what came back to the agent, what went both ways, what went out
+const VERBS = ['read','search','watch','probe','fetch','capture','pull',
+               'extract','evaluate','run','call','edit','skill','mcp',
+               'write','delete','commit','push','revert','build','install','launch','stop','spawn'];
 
 function glyph(c, verb, x, y, s, col, fade){
   c.save(); c.strokeStyle = col; c.fillStyle = col; c.lineWidth = 1.8;
   c.lineJoin = 'round'; c.lineCap = 'round'; c.globalAlpha = fade == null ? 1 : fade;
   const P = (...pts) => { c.beginPath(); pts.forEach(([a,b],i)=> i?c.lineTo(a,b):c.moveTo(a,b)); };
+  // an open arrowhead at (hx,hy) pointing along ang
+  const head = (hx, hy, ang, l) => { P([hx - Math.cos(ang-0.5)*l, hy - Math.sin(ang-0.5)*l],[hx,hy],
+                                       [hx - Math.cos(ang+0.5)*l, hy - Math.sin(ang+0.5)*l]); c.stroke(); };
   switch(verb){
-    case 'read':  P([x-s,y-s*0.8],[x+s,y-s*0.8],[x,y+s]); c.closePath(); c.stroke(); break;
-    case 'write': P([x-s,y+s*0.8],[x+s,y+s*0.8],[x,y-s]); c.closePath(); c.fill(); break;
+    case 'read': case 'list':
+                  P([x-s,y-s*0.8],[x+s,y-s*0.8],[x,y+s]); c.closePath(); c.stroke(); break;
+    case 'write': case 'note':
+                  P([x-s,y+s*0.8],[x+s,y+s*0.8],[x,y-s]); c.closePath(); c.fill(); break;
+    case 'watch':                                                   // an eye
+      c.beginPath(); c.moveTo(x-s*1.05,y); c.quadraticCurveTo(x, y-s*1.25, x+s*1.05, y);
+      c.quadraticCurveTo(x, y+s*1.25, x-s*1.05, y); c.closePath(); c.stroke();
+      c.beginPath(); c.arc(x,y,s*0.3,0,7); c.fill(); break;
+    case 'probe':                                                   // a dot and its radar arc
+      c.beginPath(); c.arc(x-s*0.4,y+s*0.4,s*0.28,0,7); c.fill();
+      c.beginPath(); c.arc(x-s*0.4,y+s*0.4,s*0.8,-Math.PI/2,0); c.stroke();
+      c.beginPath(); c.arc(x-s*0.4,y+s*0.4,s*1.3,-Math.PI/2,0); c.stroke(); break;
+    case 'capture': {                                               // four frame corners
+      const k = s*0.45;
+      P([x-s,y-s+k],[x-s,y-s],[x-s+k,y-s]); c.stroke(); P([x+s-k,y-s],[x+s,y-s],[x+s,y-s+k]); c.stroke();
+      P([x+s,y+s-k],[x+s,y+s],[x+s-k,y+s]); c.stroke(); P([x-s+k,y+s],[x-s,y+s],[x-s,y+s-k]); c.stroke(); break; }
+    case 'extract':                                                 // out of the box, upward
+      P([x-s,y-s*0.1],[x-s,y+s],[x+s,y+s],[x+s,y-s*0.1]); c.stroke();
+      P([x,y+s*0.35],[x,y-s]); c.stroke(); head(x, y-s, -Math.PI/2, s*0.6); break;
+    case 'evaluate':                                                // a check inside a circle
+      c.beginPath(); c.arc(x,y,s,0,7); c.stroke();
+      P([x-s*0.5,y],[x-s*0.15,y+s*0.4],[x+s*0.55,y-s*0.4]); c.stroke(); break;
+    case 'run':                                                     // hollow play
+      P([x-s*0.7,y-s],[x+s,y],[x-s*0.7,y+s]); c.closePath(); c.stroke(); break;
+    case 'call':                                                    // there and back
+      P([x-s,y-s*0.45],[x+s,y-s*0.45]); c.stroke(); head(x+s, y-s*0.45, 0, s*0.55);
+      P([x+s,y+s*0.45],[x-s,y+s*0.45]); c.stroke(); head(x-s, y+s*0.45, Math.PI, s*0.55); break;
+    case 'revert': {                                                // counter-clockwise
+      const t0 = Math.PI*0.45, t1 = -Math.PI*0.3;
+      c.beginPath(); c.arc(x,y,s*0.9,t0,t1,true); c.stroke();
+      head(x+Math.cos(t1)*s*0.9, y+Math.sin(t1)*s*0.9, Math.atan2(-Math.cos(t1), Math.sin(t1)), s*0.6); break; }
+    case 'build':                                                   // a brick pair
+      c.strokeRect(x-s, y+s*0.1, s*0.95, s*0.8); c.strokeRect(x+s*0.05, y+s*0.1, s*0.95, s*0.8);
+      c.strokeRect(x-s*0.5, y-s*0.9, s, s*0.8); break;
+    case 'install':                                                 // down into a tray
+      P([x,y-s],[x,y+s*0.25]); c.stroke(); head(x, y+s*0.3, Math.PI/2, s*0.6);
+      P([x-s,y+s*0.2],[x-s,y+s],[x+s,y+s],[x+s,y+s*0.2]); c.stroke(); break;
+    case 'launch':                                                  // up and out of a corner
+      P([x-s,y-s*0.2],[x-s,y+s],[x+s*0.2,y+s]); c.stroke();
+      P([x-s*0.4,y+s*0.4],[x+s,y-s]); c.stroke(); head(x+s, y-s, -Math.PI/4, s*0.65); break;
+    case 'stop':  c.fillRect(x-s*0.75, y-s*0.75, s*1.5, s*1.5); break;
     case 'edit':  P([x,y-s],[x+s,y],[x,y+s],[x-s,y]); c.closePath(); c.fill(); break;
     case 'execute': P([x-s*0.75,y-s],[x+s,y],[x-s*0.75,y+s]); c.closePath(); c.fill(); break;
     case 'search':
@@ -420,20 +485,63 @@ function glyph(c, verb, x, y, s, col, fade){
       for (let i=0;i<6;i++){ const a = Math.PI/6 + i*Math.PI/3;
         i ? c.lineTo(x+Math.cos(a)*s, y+Math.sin(a)*s) : c.moveTo(x+Math.cos(a)*s, y+Math.sin(a)*s); }
       c.closePath(); c.stroke(); break;
-    default: c.fillRect(x-s*0.7, y-s*0.7, s*1.4, s*1.4);
+    default: c.beginPath(); c.arc(x,y,s*0.45,0,7); c.fill();
   }
   c.restore();
 }
 
+// which icon a body shows: a file's role when it has a distinctive one, else its kind
+const iconFor = p => (p.type === 'file' && ROLE_ICON.has(roleOf(p.n))) ? roleOf(p.n) : p.type;
+
 function kindIcon(c, type, x, y, s, col, fade){
   c.save(); c.strokeStyle = col; c.fillStyle = col; c.lineWidth = 1.5;
-  c.lineJoin = 'round'; c.globalAlpha = fade == null ? 1 : fade;
+  c.lineJoin = 'round'; c.lineCap = 'round'; c.globalAlpha = fade == null ? 1 : fade;
   const P = (...pts) => { c.beginPath(); pts.forEach(([a,b],i)=> i?c.lineTo(a,b):c.moveTo(a,b)); };
+  const page = () => { P([x-s*0.7,y-s],[x+s*0.3,y-s],[x+s*0.7,y-s*0.55],[x+s*0.7,y+s],[x-s*0.7,y+s]);
+    c.closePath(); c.stroke(); P([x+s*0.3,y-s],[x+s*0.3,y-s*0.55],[x+s*0.7,y-s*0.55]); c.stroke(); };
+  const wrench = () => { c.lineWidth = 2; P([x-s*0.85,y+s*0.85],[x+s*0.15,y-s*0.15]); c.stroke(); c.lineWidth = 1.5;
+    c.beginPath(); c.arc(x+s*0.45, y-s*0.45, s*0.5, -Math.PI/4 + 0.75, -Math.PI/4 - 0.75 + 2*Math.PI); c.stroke(); };
+  const gear = (r, teeth, hole) => { c.beginPath(); c.arc(x,y,r,0,7); c.stroke();
+    for (let i=0;i<teeth;i++){ const a = i*2*Math.PI/teeth;
+      P([x+Math.cos(a)*r, y+Math.sin(a)*r],[x+Math.cos(a)*r*1.45, y+Math.sin(a)*r*1.45]); c.stroke(); }
+    c.beginPath(); c.arc(x,y,hole,0,7); hole > r*0.3 ? c.stroke() : c.fill(); };
   switch(type){
-    case 'file':
-      P([x-s*0.7,y-s],[x+s*0.3,y-s],[x+s*0.7,y-s*0.55],[x+s*0.7,y+s],[x-s*0.7,y+s]);
-      c.closePath(); c.stroke();
-      P([x+s*0.3,y-s],[x+s*0.3,y-s*0.55],[x+s*0.7,y-s*0.55]); c.stroke(); break;
+    case 'file': case 'source': case 'config': case 'data': page(); break;
+    case 'doc': page(); P([x-s*0.35,y-s*0.05],[x+s*0.35,y-s*0.05]); c.stroke(); P([x-s*0.35,y+s*0.45],[x+s*0.35,y+s*0.45]); c.stroke(); break;
+    case 'scratch': c.setLineDash([1.5,2.2]); page(); c.setLineDash([]); break;
+    case 'tool': case 'prog': wrench(); break;
+    case 'log':
+      P([x-s,y-s*0.6],[x+s,y-s*0.6]); c.stroke(); P([x-s,y],[x+s,y]); c.stroke();
+      c.beginPath(); c.moveTo(x-s,y+s*0.6); c.lineTo(x+s*0.3,y+s*0.6); c.quadraticCurveTo(x+s*0.75,y+s*0.6,x+s*0.75,y+s*1.1); c.stroke(); break;
+    case 'test':
+      c.strokeRect(x-s,y-s,2*s,2*s); P([x-s*0.5,y],[x-s*0.15,y+s*0.4],[x+s*0.55,y-s*0.45]); c.stroke(); break;
+    case 'media':
+      c.strokeRect(x-s,y-s*0.8,2*s,1.6*s);
+      P([x-s*0.8,y+s*0.6],[x-s*0.25,y-s*0.15],[x+s*0.15,y+s*0.3],[x+s*0.4,y+s*0.05],[x+s*0.8,y+s*0.6]); c.stroke();
+      c.beginPath(); c.arc(x+s*0.45,y-s*0.4,s*0.16,0,7); c.fill(); break;
+    case 'archive':
+      c.strokeRect(x-s,y-s,2*s,s*0.6); c.strokeRect(x-s*0.85,y-s*0.4,1.7*s,1.4*s);
+      P([x-s*0.25,y+s*0.1],[x+s*0.25,y+s*0.1]); c.stroke(); break;
+    case 'ci': gear(s*0.6, 8, s*0.22); break;
+    case 'process': gear(s*0.68, 6, s*0.18); break;
+    case 'vm':
+      c.strokeRect(x-s,y-s,2*s,1.4*s); P([x,y+s*0.4],[x,y+s]); c.stroke(); P([x-s*0.45,y+s],[x+s*0.45,y+s]); c.stroke(); break;
+    case 'host':
+      c.strokeRect(x-s,y-s,2*s,2*s); P([x-s*0.6,y-s*0.4],[x+s*0.6,y-s*0.4]); c.stroke();
+      P([x-s*0.6,y+s*0.4],[x+s*0.6,y+s*0.4]); c.stroke(); break;
+    case 'service':                                                 // a plug
+      P([x-s*0.45,y-s],[x-s*0.45,y-s*0.35]); c.stroke(); P([x+s*0.45,y-s],[x+s*0.45,y-s*0.35]); c.stroke();
+      P([x-s*0.85,y-s*0.35],[x+s*0.85,y-s*0.35],[x+s*0.6,y+s*0.45],[x-s*0.6,y+s*0.45]); c.closePath(); c.stroke();
+      P([x,y+s*0.45],[x,y+s]); c.stroke(); break;
+    case 'api':                                                     // angle brackets
+      P([x-s*0.3,y-s],[x-s,y],[x-s*0.3,y+s]); c.stroke(); P([x+s*0.3,y-s],[x+s,y],[x+s*0.3,y+s]); c.stroke(); break;
+    case 'run':
+      c.beginPath(); c.arc(x,y,s,0,7); c.stroke();
+      P([x-s*0.35,y-s*0.5],[x+s*0.5,y],[x-s*0.35,y+s*0.5]); c.closePath(); c.fill(); break;
+    case 'package': {                                               // a cube
+      const v = k => [x + Math.cos(-Math.PI/2 + k*Math.PI/3)*s, y + Math.sin(-Math.PI/2 + k*Math.PI/3)*s];
+      P(v(0),v(1),v(2),v(3),v(4),v(5)); c.closePath(); c.stroke();
+      P([x,y],v(1)); c.stroke(); P([x,y],v(3)); c.stroke(); P([x,y],v(5)); c.stroke(); break; }
     case 'dir': case 'repo':
       P([x-s,y+s*0.8],[x-s,y-s*0.5],[x-s*0.2,y-s*0.5],[x,y-s*0.85],[x+s,y-s*0.85],[x+s,y+s*0.8]);
       c.closePath(); c.stroke(); break;
@@ -457,17 +565,16 @@ function kindIcon(c, type, x, y, s, col, fade){
     case 'skill': glyph(c,'skill',x,y,s*0.8,col,1); break;
     case 'agent': glyph(c,'spawn',x,y,s*0.8,col,1); break;
     case 'mcp':   glyph(c,'mcp',x,y,s*0.8,col,1); break;
-    case 'tool':  P([x-s*0.6,y-s],[x-s,y-s],[x-s,y+s],[x-s*0.6,y+s]); c.stroke();
-                  P([x+s*0.6,y-s],[x+s,y-s],[x+s,y+s],[x+s*0.6,y+s]); c.stroke(); break;
     default: c.beginPath(); c.arc(x,y,s*0.5,0,7); c.stroke();
   }
   c.restore();
 }
 
 // ------------------------------------------------------------- the graph ----
-// The real graph, not a star. Agents use tools; tools touch things; things
-// live inside directories inside repos; searches yield urls; commits land in
-// repos; agents spawn agents. Layout is force-directed over those edges, with
+// The real graph, not a star. The agent acts on things, sometimes through an
+// instrument (a program, or a file it runs); things live inside directories
+// inside repos; searches yield urls; commits land in repos; repos have remotes;
+// instruments evaluate against APIs. Layout is force-directed over those edges, with
 // recency as a gentle pull toward the centre so what is being worked on now
 // sits in the middle and the rest settles outward -- but structure wins.
 const ENT = new Map();            // id -> body (visible node)
@@ -478,7 +585,8 @@ let ptr = 0, lastRefSeen = null, ZOOM = 1, dirty = false;
 let KEEP = 32;                    // how many things the universe holds; the rest expire (- / = to change)
 const MAXN = 170;                 // hard cap, in case KEEP's containers pile up
 
-const REST = {CONTAINS:40, USED:118, SPAWNED:110, YIELDED:70, IN_REPO:56, MENTIONS:95, TOUCH:96};
+const REST = {CONTAINS:40, USED:118, SPAWNED:110, YIELDED:70, IN_REPO:56, MENTIONS:95, TOUCH:96, AGAINST:80, REMOTE:70};
+const PARTNERED = new Set(['IN_REPO', 'REMOTE', 'AGAINST']);   // src appears, then its partner (dst)
 const hashf = s => { let h = 0; for (let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i))|0; return Math.abs(h); };
 const RAD = () => Math.min(C.w*0.5, C.h*0.5) - 30;
 
@@ -489,21 +597,27 @@ function synthetic(id){
   return {id, type:t, label:rest.join(':').split('/').pop() || id, attrs:{}, usd:0};
 }
 
+// Births. What the verb made (dir > 0) flies out of whatever made it; what the
+// verb reached for (dir < 0) surfaces at the rim and fades in; what it worked
+// on in place (dir 0) appears beside its source. A thing seen before comes
+// back where it was.
 function spawn(n, id, verb, near){
   const cls = CLASS[n.type] || 'agent', cx = C.w/2, cy = C.h*0.47, h = hashf(id);
-  const out = (VERB_DIR[verb] || 0) > 0;
-  const p = {id, n, cls, type:n.type, verb: verb || '', touches:0, burn:0, last:-1e9, first:1e18,
-             flash:1, err:false, fade:1, grow:1, seed:h, vx:0, vy:0, deg:0, rad:9};
+  const dir = VERB_DIR[verb] ?? 0;
+  const p = {id, n, cls, type:n.type, verb: verb || '', touches:0, burn:0, last:-1e9, lastOwn:-1e9, first:1e18,
+             flash:1, ok:0, err:false, fade:1, grow:1, seed:h, vx:0, vy:0, deg:0, rad:9, hist:[]};
   const kept = POS.get(id);
+  const a = (h % 360) * Math.PI/180;
   if (kept && Math.hypot(kept.x-cx, kept.y-cy) < RAD()*1.05){ p.x = kept.x; p.y = kept.y; p.fade = 0.4; }
   else if (id === MAIN){ p.x = cx; p.y = cy; }
-  else if (near){                                   // beside what it is attached to
-    const a = (h % 360) * Math.PI/180; p.x = near.x + Math.cos(a)*38; p.y = near.y + Math.sin(a)*38; p.fade = 0;
-  } else if (out){                                  // made: thrown out of the agent
-    p.x = cx; p.y = cy; p.vx = Math.cos(h)*4; p.vy = Math.sin(h)*4; p.grow = 0.08;
-  } else {                                          // reached for: surfaces at the rim
-    const a = (h % 360) * Math.PI/180, r = RAD()*0.92;
+  else if (dir > 0){                                // made: thrown out of its maker
+    const o = near || {x:cx, y:cy};
+    p.x = o.x + Math.cos(a)*6; p.y = o.y + Math.sin(a)*6; p.vx = Math.cos(a)*4.5; p.vy = Math.sin(a)*4.5; p.grow = 0.08;
+  } else if (dir < 0 || !near){                     // reached for: surfaces at the rim
+    const r = RAD()*0.92;
     p.x = cx + Math.cos(a)*r; p.y = cy + Math.sin(a)*r; p.fade = 0;
+  } else {                                          // beside what it is attached to
+    p.x = near.x + Math.cos(a)*38; p.y = near.y + Math.sin(a)*38; p.fade = 0;
   }
   return p;
 }
@@ -516,10 +630,19 @@ function ensure(id, ref, verb, near){
   p.first = Math.min(p.first, ref);
   return p;
 }
-function touch(p, ref, verb, e){
-  p.touches++; p.last = ref; p.flash = 1;
+function touch(p, ref, verb, e, o){
+  p.touches++; p.last = ref; p.lastOwn = ref; p.flash = 1;
   if (verb) p.verb = verb;
-  if (e){ p.err = !!e.err; p.target = e.target; p.burn += (e.usd || 0)/Math.max(1, (e.nodes||[]).length); }
+  if (e){
+    p.err = o ? !!o.fail : !!e.err; p.target = e.target;
+    p.burn += o ? (o.share || 0) : (e.usd || 0)/Math.max(1, (e.nodes||[]).length);
+    if (e.outcome === 'ok' && verb === 'evaluate') p.ok = 1;      // the quiet confirmation
+  }
+}
+const labelOf = p => p.id === MAIN ? 'agent' : p.id === SUB ? 'subagents' : String(p.n.label);
+function remember(S, P, verb){                      // the last few things that happened here, for the tooltip
+  const h = {src: labelOf(S), dst: labelOf(P), verb};
+  for (const q of [S, P]){ q.hist.push(h); if (q.hist.length > 8) q.hist.shift(); }
 }
 function link(src, dst, type, ref, extra){
   if (src === dst) return;
@@ -531,29 +654,59 @@ function link(src, dst, type, ref, extra){
   return e;
 }
 
+// One call is a handful of links [src, dst, verb]. src is the actor ("agent", or
+// a tool:* name from the older parser, which we treat the same) or an instrument
+// the actor ran; dst is what was acted on. Tools are not things: no tool:* node.
+const isActor = s => s == null || s === 'agent' || String(s).startsWith('tool:');
 function feed(e){
   const ref = refTime();
   const agentId = e.sidechain ? SUB : MAIN;
   const A = ensure(agentId, ref); touch(A, ref);
   if (e.sidechain){ ensure(MAIN, ref); link(MAIN, SUB, 'SPAWNED', ref); }
-  const toolId = 'tool:' + (e.tool || '?');
-  const T = ensure(toolId, ref, '', A); touch(T, ref);
-  link(agentId, toolId, 'USED', ref);
-  for (const id of (e.nodes || [])){
-    const P = ensure(id, ref, e.verb, null); touch(P, ref, e.verb, e);
-    link(toolId, id, 'TOUCH', ref, {verb: e.verb, tool: e.tool});
+  let links = (e.links || []).filter(l => Array.isArray(l) && l.length >= 2 && l[1] && !isActor(l[1]));
+  if (!links.length) links = [...new Set(e.nodes || [])].filter(id => !isActor(id)).map(id => ['agent', id, e.verb]);
+  const fail = e.outcome === 'fail' || !!e.err;
+  const targets = new Set(links.map(l => l[1]));
+  const share = (e.usd || 0) / Math.max(1, targets.size);
+  const used = new Set();
+  for (const [s, d, v] of links){
+    const verb = v || e.verb || 'run';
+    const srcId = isActor(s) ? agentId : s;
+    if (srcId === d || d === MAIN || d === SUB) continue;
+    let S = A;
+    if (srcId !== agentId){
+      S = ensure(srcId, ref, 'run', A);             // appears beside the actor
+      const acts = canAct(S);
+      if (acts) S.instrument = true;                // an instrument: acts on its own, drawn as a hub
+      if (!used.has(srcId)){
+        used.add(srcId);
+        if (!targets.has(srcId)){
+          touch(S, ref);
+          if (acts){                                // the parser did not say the actor ran it; it did
+            link(agentId, srcId, 'TOUCH', ref, {verb:'run', tool:e.tool}); remember(A, S, 'run'); }
+        }
+      }
+    }
+    if (verb === 'yield'){                          // a search yielding a url is structure, not an act
+      ensure(d, ref, '', S); link(srcId, d, 'YIELDED', ref); continue;
+    }
+    const P = ensure(d, ref, verb, S);
+    touch(P, ref, verb, e, {fail, share});
+    link(srcId, d, 'TOUCH', ref, {verb, tool:e.tool});
+    remember(S, P, verb);
   }
 }
 
-// structure that is not a tool touch: containment, yields, commits, spawns
+// structure that is not an action: containment, yields, commits, remotes, what
+// an instrument evaluates against, spawns
 function linkStructure(ref){
   if (!snap) return;
   for (const ed of (snap.edges || [])){
     if (ed.t0 != null && ed.t0 > ref) continue;
     let src = ed.src, dst = ed.dst, type = ed.type;
-    if (type === 'CONTAINS' || type === 'YIELDED' || type === 'IN_REPO'){
-      const child = type === 'IN_REPO' ? src : dst, parent = type === 'IN_REPO' ? dst : src;
-      if (!ENT.has(child)) continue;                // a container appears with its first child
+    if (type === 'CONTAINS' || type === 'YIELDED' || PARTNERED.has(type)){
+      const child = PARTNERED.has(type) ? src : dst, parent = PARTNERED.has(type) ? dst : src;
+      if (!ENT.has(child)) continue;                // a container (or partner) appears with its first child
       ensure(parent, ref, '', ENT.get(child));
       if (!EDGES.has(src+'>'+dst+'>'+type)) link(src, dst, type, ed.t0 ?? ref);
     } else if (type === 'SPAWNED' || type === 'MENTIONS'){
@@ -561,10 +714,10 @@ function linkStructure(ref){
       if (!EDGES.has(MAIN+'>'+dst+'>'+type)) link(MAIN, dst, type, ed.t0 ?? ref);
     }
   }
-  // what a container holds is as fresh as its freshest child
+  // what a container holds is as fresh as its freshest child; a partner is as fresh as what it partners
   for (const e of EDGES.values()){
-    if (e.type !== 'CONTAINS' && e.type !== 'IN_REPO') continue;
-    const parent = ENT.get(e.type === 'IN_REPO' ? e.dst : e.src), child = ENT.get(e.type === 'IN_REPO' ? e.src : e.dst);
+    if (e.type !== 'CONTAINS' && !PARTNERED.has(e.type)) continue;
+    const parent = ENT.get(PARTNERED.has(e.type) ? e.dst : e.src), child = ENT.get(PARTNERED.has(e.type) ? e.src : e.dst);
     if (parent && child && child.last > parent.last) parent.last = child.last;
   }
 }
@@ -573,16 +726,19 @@ function linkStructure(ref){
 // universe holds the KEEP most recently touched things plus whatever they hang
 // off (their folders, their tools). Everything else is expiring: it drifts past
 // the rim and fades out. Touch it again and it is pulled straight back in.
+const holder = p => ['dir','repo','domain','agent','prog'].includes(p.type) || isInstrument(p);
 function expire(){
   const things = [...ENT.values()].filter(p => p.id !== MAIN && p.id !== SUB);
-  const ranked = things.filter(p => !['dir','repo','domain','tool','agent'].includes(p.type))
-                       .sort((a,b) => b.last - a.last);
+  // ranked by their own last touch: containers and partners that were only ever
+  // implied by structure are kept through what they hold, not on their own
+  const ranked = things.filter(p => p.type !== 'agent' && p.lastOwn > -1e8)
+                       .sort((a,b) => b.lastOwn - a.lastOwn);
   const keep = new Set(ranked.slice(0, KEEP).map(p => p.id));
-  for (let pass = 0; pass < 2; pass++)              // containers and hubs of kept things
+  for (let pass = 0; pass < 3; pass++)              // containers, instruments and hubs of kept things; their partners
     for (const e of EDGES.values()){
       const a = ENT.get(e.src), b = ENT.get(e.dst); if (!a || !b) continue;
-      if (keep.has(b.id) && (a.type === 'dir' || a.type === 'repo' || a.type === 'domain' || a.type === 'tool' || a.type === 'agent')) keep.add(a.id);
-      if (keep.has(a.id) && e.type === 'IN_REPO') keep.add(b.id);
+      if (keep.has(b.id) && holder(a)) keep.add(a.id);
+      if (keep.has(a.id) && PARTNERED.has(e.type)) keep.add(b.id);
     }
   for (const p of things) p.expiring = !keep.has(p.id);
 }
@@ -629,7 +785,7 @@ function physics(ref){
       let dx = b.x-a.x, dy = b.y-a.y, d2 = dx*dx+dy*dy;
       if (d2 < 1){ dx = (hashf(a.id)%7-3)*0.1; dy = (hashf(b.id)%7-3)*0.1; d2 = 1; }
       if (d2 > 160000) continue;
-      const hubs = (a.type==='tool'||a.type==='agent') && (b.type==='tool'||b.type==='agent');
+      const hubs = isHubLike(a) && isHubLike(b);
       const want = (a.rad + b.rad + (hubs ? 90 : 34)), f = 2600/d2 + (d2 < want*want ? (want*want-d2)/(want*want)*(hubs ? 3 : 1.6) : 0);
       const d = Math.sqrt(d2), fx = dx/d*f, fy = dy/d*f;
       a.vx -= fx; a.vy -= fy; b.vx += fx; b.vy += fy;
@@ -639,8 +795,10 @@ function physics(ref){
     const a = ENT.get(e.src), b = ENT.get(e.dst); if (!a || !b) continue;
     const rest = (REST[e.type] || 90) * (0.85 + 0.3*ZOOM);
     let dx = b.x-a.x, dy = b.y-a.y, d = Math.hypot(dx,dy) || 1;
-    const fileEnd = (b.type === 'file' || a.type === 'file');
-    const k = e.type === 'CONTAINS' ? 0.07 : (e.type === 'TOUCH' && fileEnd) ? 0.010 : e.type === 'USED' ? 0.03 : 0.018;
+    // an instrument holds its targets close; the agent lets its files drift
+    const k = e.type === 'CONTAINS' ? 0.07
+            : e.type === 'TOUCH' ? (isInstrument(a) ? 0.02 : isInstrument(b) ? 0.03 : b.type === 'file' ? 0.010 : 0.018)
+            : e.type === 'USED' ? 0.03 : 0.018;
     const f = (d-rest)*k;
     a.vx += dx/d*f; a.vy += dy/d*f; b.vx -= dx/d*f; b.vy -= dy/d*f;
   }
@@ -649,7 +807,7 @@ function physics(ref){
     const dx = p.x-cx, dy = p.y-cy, d = Math.hypot(dx,dy) || 1;
     const f = (tr - d) * (p.expiring ? 0.012 : 0.006);
     p.vx += dx/d*f; p.vy += dy/d*f;
-    p.flash = Math.max(0, p.flash - 0.02); p.grow += (1-p.grow)*0.075;
+    p.grow += (1-p.grow)*0.075;
     if (p.expiring) p.fade = Math.max(0, p.fade - 0.018);     // the expanding universe
     else p.fade += (1-p.fade)*0.06;
   }
@@ -658,8 +816,13 @@ function physics(ref){
     if (p.id === MAIN){ p.x = cx; p.y = cy; p.vx = p.vy = 0; continue; }
     p.vx *= 0.82; p.vy *= 0.82;
     p.x += Math.max(-12, Math.min(12, p.vx)); p.y += Math.max(-12, Math.min(12, p.vy));
-    if (!p.expiring){ p.x = Math.max(40, Math.min(C.w-40, p.x)); p.y = Math.max(34, Math.min(C.h-104, p.y)); }
+    if (!p.expiring){ p.x = Math.max(40, Math.min(C.w-40, p.x)); p.y = Math.max(34, Math.min(C.h-150, p.y)); }
   }
+}
+// the glow fades even when the layout is frozen: a white hit for ~150 ms, then
+// an afterglow in the hue over ~1.5 s; the clean-evaluation ring drifts out
+function glowTick(){
+  for (const p of ENT.values()){ p.flash = Math.max(0, p.flash - 0.011); p.ok = Math.max(0, (p.ok||0) - 0.012); }
   for (const e of EDGES.values()) e.flash = Math.max(0, (e.flash||0) - 0.02);
 }
 
@@ -671,23 +834,31 @@ let C = fit(cv);
 addEventListener('resize', () => { C = fit(cv); drawMap(); });
 
 const gk = $('glyphs'), gx = gk.getContext('2d');
+let keyDrawn = false;
 function drawGlyphKey(){
+  if (keyDrawn) return; keyDrawn = true;
   gx.setTransform(2,0,0,2,0,0); gx.clearRect(0,0,gk.width,gk.height);
-  gx.font = '11px ui-monospace,monospace'; gx.textAlign = 'left'; gx.textBaseline = 'middle';
-  const perRow = 7, cw = 86, rh = 23;
-  VERBS.forEach((v,i) => {
-    const col = i % perRow, row = (i/perRow)|0, x = 10 + col*cw, y = 11 + row*rh;
-    glyph(gx, v, x, y, 5.4, '#b2c2d6', 1); gx.fillStyle = '#8296ae'; gx.fillText(v, x+11, y+0.5);
+  gx.font = '12px ui-monospace,monospace'; gx.textAlign = 'left'; gx.textBaseline = 'middle';
+  // one row per direction: what came back, what went both ways, what went out
+  const rows = [['← in', -1], ['↔ both', 0], ['→ out', 1]], cw = 80, rh = 20, x0 = 66;
+  rows.forEach(([lab, dir], row) => {
+    const y = 12 + row*rh;
+    gx.fillStyle = CHROME; gx.fillText(lab, 10, y+0.5);
+    VERBS.filter(v => (VERB_DIR[v] ?? 0) === dir).forEach((v, col) => {
+      const x = x0 + col*cw;
+      glyph(gx, v, x, y, 5.4, '#b2c2d6', 1); gx.fillStyle = '#b2c2d6'; gx.fillText(v, x+11, y+0.5);
+    });
   });
-  const KIND = [['#c98500','artifacts'],['#3987e5','agent · tools'],['#d55181','world']];
+  const ky = 12 + 3*rh + 2;
+  const KIND = [['#c98500','artifacts'],['#3987e5','agent · instruments'],['#d55181','world']];
   let kx = 10;
   KIND.forEach(([c,label]) => {
-    gx.fillStyle = c; gx.beginPath(); gx.arc(kx+4, 11+2*23, 4.5, 0, 7); gx.fill();
-    gx.fillStyle = '#b2c2d6'; gx.fillText(label, kx+13, 11+2*23+0.5);
+    gx.fillStyle = c; gx.beginPath(); gx.arc(kx+4, ky, 4.5, 0, 7); gx.fill();
+    gx.fillStyle = '#b2c2d6'; gx.fillText(label, kx+13, ky+0.5);
     kx += 13 + gx.measureText(label).width + 16;
   });
-  gx.fillStyle = '#8296ae';
-  gx.fillText('agent → tool → thing · folder ⊃ file · search → url · size = burned · inner = current · ×n = returns', kx + 6, 11 + 2*23);
+  gx.fillStyle = CHROME;
+  gx.fillText('agent → instrument → thing · folder ⊃ file · size = burn · ×n = returns', kx + 4, ky + 0.5);
 }
 
 function arrow(c, x1, y1, x2, y2, t, col, a, size){
@@ -697,102 +868,144 @@ function arrow(c, x1, y1, x2, y2, t, col, a, size){
   c.restore();
 }
 
+function edgePath(c, e, a, b){
+  c.beginPath(); c.moveTo(a.x, a.y);
+  if (e.type === 'TOUCH' || e.type === 'USED'){
+    const mx = (a.x+b.x)/2, my = (a.y+b.y)/2, nx = -(b.y-a.y), ny = (b.x-a.x), L = Math.hypot(nx,ny)||1;
+    const bow = ((hashf(e.src+e.dst) % 2) ? 1 : -1) * Math.min(26, L*0.12);
+    c.quadraticCurveTo(mx + nx/L*bow, my + ny/L*bow, b.x, b.y);
+  } else c.lineTo(b.x, b.y);
+}
+function rrect(c, x, y, w, h, r){
+  c.beginPath(); c.moveTo(x+r, y); c.lineTo(x+w-r, y); c.quadraticCurveTo(x+w, y, x+w, y+r);
+  c.lineTo(x+w, y+h-r); c.quadraticCurveTo(x+w, y+h, x+w-r, y+h); c.lineTo(x+r, y+h);
+  c.quadraticCurveTo(x, y+h, x, y+h-r); c.lineTo(x, y+r); c.quadraticCurveTo(x, y, x+r, y); c.closePath();
+}
+
 function drawStream(now){
   const {w,h,d} = C; ctx.setTransform(d,0,0,d,0,0); ctx.clearRect(0,0,w,h);
   if (!snap) return;
   const ref = refTime(), cx = w/2, cy = h*0.47;
   pump(ref);
   if (!frozen) physics(ref);
-  drawGlyphKey();
+  glowTick(); drawGlyphKey();
   for (const p of ENT.values()) POS.set(p.id, {x:p.x, y:p.y});
 
-  // faint recency rings so the radial meaning is readable
+  // faint recency rings so the radial meaning is readable: chrome, dimmer than any datum
   const R = RAD()*ZOOM;
-  ctx.font = '11px ui-monospace,monospace'; ctx.textAlign = 'right';
+  ctx.font = '12px ui-monospace,monospace'; ctx.textAlign = 'right';
   for (const [f,label] of [[0.18,'at work'],[0.57,'earlier'],[0.96,'forgetting']]){
-    ctx.strokeStyle = 'rgba(57,135,229,.10)'; ctx.lineWidth = 1;
+    ctx.strokeStyle = hexA(CHROME, 0.09); ctx.lineWidth = 1;
     ctx.beginPath(); ctx.arc(cx, cy, R*f, 0, 7); ctx.stroke();
-    ctx.fillStyle = 'rgba(130,150,174,.55)'; ctx.fillText(label, cx - R*f*0.93, cy + R*f*0.38);
+    ctx.fillStyle = hexA(CHROME, 0.85); ctx.fillText(label, cx - R*f*0.93, cy + R*f*0.38);
   }
 
-  // edges
+  // edges: additive, in three passes -- a wide dim wash in the hue, a thin
+  // brighter line, and a near-white core only while the edge is fresh
   const running = new Set();
   if (mode === 'live') for (const i of (snap.state.inflight||[])) for (const id of (i.nodes||[])) running.add(id);
+  ctx.globalCompositeOperation = 'lighter';
   for (const e of EDGES.values()){
     const a = ENT.get(e.src), b = ENT.get(e.dst); if (!a || !b) continue;
     const hot = Math.max(a.prox||0, b.prox||0), fresh = e.flash || 0;
-    const fade = Math.min(a.fade, b.fade);
+    const L = Math.hypot(b.x-a.x, b.y-a.y);
+    const far = L < 60 ? 1 : L > 220 ? 0.3 : 1 - 0.7*(L-60)/160;        // long edges fade
+    const fade = Math.min(a.fade, b.fade) * far;
     let col, alpha, width;
-    if (e.type === 'CONTAINS' || e.type === 'IN_REPO'){ col = COLOR[b.cls === 'agent' ? a.cls : b.cls]; alpha = 0.22 + 0.3*hot; width = 1.1; }
-    else if (e.type === 'USED'){ col = COLOR.agent; alpha = 0.14 + 0.45*hot + 0.4*fresh; width = 1 + 0.8*Math.log2(1+e.w); }
-    else if (e.type === 'TOUCH'){ col = COLOR[b.cls]; alpha = 0.16 + 0.5*hot + 0.45*fresh; width = 1 + 0.9*Math.log2(1+e.w); }
-    else { col = COLOR[b.cls]; alpha = 0.16 + 0.4*hot; width = 1.1; }
-    ctx.strokeStyle = hexA(col, alpha*fade); ctx.lineWidth = width;
-    ctx.beginPath(); ctx.moveTo(a.x, a.y);
-    if (e.type === 'TOUCH' || e.type === 'USED'){
-      const mx = (a.x+b.x)/2, my = (a.y+b.y)/2, nx = -(b.y-a.y), ny = (b.x-a.x), L = Math.hypot(nx,ny)||1;
-      const bow = ((hashf(e.src+e.dst) % 2) ? 1 : -1) * Math.min(26, L*0.12);
-      ctx.quadraticCurveTo(mx + nx/L*bow, my + ny/L*bow, b.x, b.y);
-    } else ctx.lineTo(b.x, b.y);
-    ctx.stroke();
+    if (e.type === 'CONTAINS' || e.type === 'IN_REPO'){ col = COLOR[b.cls === 'agent' ? a.cls : b.cls]; alpha = 0.2 + 0.28*hot; width = 1; }
+    else if (e.type === 'USED'){ col = COLOR.agent; alpha = 0.14 + 0.42*hot + 0.4*fresh; width = 1 + 0.8*Math.log2(1+e.w); }
+    else if (e.type === 'TOUCH'){ col = COLOR[b.cls]; alpha = 0.16 + 0.46*hot + 0.42*fresh; width = 1 + 0.9*Math.log2(1+e.w); }
+    else { col = COLOR[b.cls]; alpha = 0.16 + 0.36*hot; width = 1; }
+    ctx.lineWidth = width + 2.8; ctx.strokeStyle = hexA(col, alpha*0.26*fade); edgePath(ctx, e, a, b); ctx.stroke();
+    ctx.lineWidth = Math.max(1, width*0.8); ctx.strokeStyle = hexA(col, alpha*0.9*fade); edgePath(ctx, e, a, b); ctx.stroke();
+    if (fresh > 0.02){ ctx.lineWidth = 1; ctx.strokeStyle = hexA(CORE, 0.55*fresh*fade); edgePath(ctx, e, a, b); ctx.stroke(); }
     if (e.type === 'TOUCH'){
       const dir = VERB_DIR[e.verb] ?? 0;
       if (dir > 0) arrow(ctx, a.x, a.y, b.x, b.y, 0.72, col, (0.35 + 0.6*fresh)*fade, 5);
       else if (dir < 0) arrow(ctx, b.x, b.y, a.x, a.y, 0.72, col, (0.35 + 0.6*fresh)*fade, 5);
-    } else if (e.type === 'SPAWNED' || e.type === 'YIELDED' || e.type === 'IN_REPO'){
+    } else if (e.type === 'SPAWNED' || e.type === 'YIELDED' || PARTNERED.has(e.type)){
       arrow(ctx, a.x, a.y, b.x, b.y, 0.7, col, 0.35*fade, 4);
     }
     if (fresh > 0.02 && !reduce && e.type !== 'CONTAINS'){   // a packet along a fresh edge
       const t = 1 - fresh, px2 = a.x + (b.x-a.x)*t, py2 = a.y + (b.y-a.y)*t;
-      ctx.fillStyle = hexA('#ffffff', fresh*0.9); ctx.beginPath(); ctx.arc(px2, py2, 2.4 + fresh*2.4, 0, 7); ctx.fill();
+      ctx.fillStyle = hexA(CORE, fresh*0.9); ctx.beginPath(); ctx.arc(px2, py2, 2.4 + fresh*2.4, 0, 7); ctx.fill();
     }
   }
+  ctx.globalCompositeOperation = 'source-over';
 
   // nodes
   const ents = [...ENT.values()].sort((x,y) => (x.prox||0) - (y.prox||0));
-  const maxBurn = Math.max(1e-4, ...ents.filter(p => p.type !== 'tool' && p.type !== 'agent').map(p => p.burn||0));
-  const maxUse = Math.max(1, ...ents.filter(p => p.type === 'tool' || p.type === 'agent').map(p => p.touches||0));
+  const maxBurn = Math.max(1e-4, ...ents.filter(p => !isHubLike(p)).map(p => p.burn||0));
+  const maxUse = Math.max(1, ...ents.filter(p => isHubLike(p)).map(p => p.touches||0));
   const boxes = [];
   for (const p of ents){
     const hot = p.prox != null ? p.prox : 1, col = COLOR[p.cls];
-    const isHub = p.type === 'tool' || p.type === 'agent';
+    const inst = isInstrument(p), isHub = p.type === 'agent' || inst;
     const base = isHub ? 8 + 14*Math.sqrt(p.touches/maxUse) : 6 + 20*Math.sqrt((p.burn||0)/maxBurn);
     const act = running.has(p.id) || p.flash > 0.25;
     const bb = act && !reduce ? (Math.sin(now/170 + p.seed)+1)/2 : 0;
     const breathe = reduce ? 0 : Math.sin(now/560 + p.seed)*0.03*hot;
     const r = base * (0.3 + 0.7*p.grow) * (1 + breathe + bb*0.17);
     p.rad = r;
-    const alpha = (0.5 + 0.5*hot) * p.fade;
-    ctx.save(); ctx.globalAlpha = alpha;
-    if (act && !reduce){ ctx.strokeStyle = hexA(col, 0.5*(1-bb)); ctx.lineWidth = 1.6;
+    // dissolving: the label goes first, then the fill, then the stroke greys and dashes, then a dot
+    const dying = !!p.expiring, f = p.fade;
+    const showLabel = !(dying && f < 0.7), showFill = !(dying && f < 0.5), ghost = dying && f < 0.3, dot = dying && f < 0.12;
+    let alpha = (0.5 + 0.5*hot) * f;
+    if (!reduce && !isHub && p.touches === 0 && Math.hypot(p.x-cx, p.y-cy) > R*0.6)       // never fresh: a twinkle at the rim
+      alpha += 0.12 * Math.sin(now/210 + p.seed) * Math.sin(now/347 + p.seed*0.7);
+    ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+    if (dot){
+      ctx.fillStyle = hexA(CHROME, 0.9); ctx.beginPath(); ctx.arc(p.x, p.y, 1.6, 0, 7); ctx.fill(); ctx.restore(); continue;
+    }
+    const sc = ghost ? mixHex(col, CHROME, 1 - f/0.3) : col;        // stroke colour
+    if (p.flash > 0 && !reduce && !dying){                          // phosphor: a white hit, then an afterglow in the hue
+      const white = p.flash > 0.9;
+      ctx.fillStyle = white ? hexA(CORE, 0.85) : hexA(col, 0.3*p.flash);
+      ctx.beginPath(); ctx.arc(p.x, p.y, r + (white ? 3 : 2 + 9*p.flash), 0, 7); ctx.fill();
+    }
+    if (act && !reduce && !dying){ ctx.strokeStyle = hexA(col, 0.5*(1-bb)); ctx.lineWidth = 1.6;
       ctx.beginPath(); ctx.arc(p.x, p.y, r + 5 + bb*13, 0, 7); ctx.stroke(); }
-    ctx.shadowColor = col; ctx.shadowBlur = 6 + hot*18 + bb*18;
+    ctx.shadowColor = col; ctx.shadowBlur = ghost ? 0 : 6 + hot*18 + bb*18;
+    if (ghost) ctx.setLineDash([3, 3]);
+    const iconCol = p.flash > 0.9 && !dying ? CORE : sc;
     if (p.id === MAIN){
       ctx.fillStyle = 'rgba(242,246,251,.9)'; ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.fill();
-    } else if (isHub){                                // hubs are squares: they are not things, they act
-      ctx.fillStyle = hexA(col, 0.22 + 0.25*hot); ctx.fillRect(p.x-r, p.y-r, 2*r, 2*r);
-      ctx.shadowBlur = 0; ctx.strokeStyle = hexA(col, 0.9); ctx.lineWidth = 1.8; ctx.strokeRect(p.x-r, p.y-r, 2*r, 2*r);
-      if (p.type === 'agent') glyph(ctx, 'spawn', p.x, p.y, Math.min(7, r*0.55), col, 1);
-      else kindIcon(ctx, 'tool', p.x, p.y, Math.min(6, r*0.5), col, 1);
+    } else if (inst){                                 // instruments: rounded squares. Not things; they act
+      rrect(ctx, p.x-r, p.y-r, 2*r, 2*r, Math.min(6, r*0.4));
+      if (showFill){ ctx.fillStyle = hexA(col, 0.22 + 0.25*hot); ctx.fill(); }
+      ctx.shadowBlur = 0; ctx.strokeStyle = hexA(sc, 0.9); ctx.lineWidth = 1.8; ctx.stroke();
+      if (showFill) kindIcon(ctx, iconFor(p), p.x, p.y, Math.min(6, r*0.5), iconCol, 1);
+    } else if (isHub){                                // agents are squares
+      if (showFill){ ctx.fillStyle = hexA(col, 0.22 + 0.25*hot); ctx.fillRect(p.x-r, p.y-r, 2*r, 2*r); }
+      ctx.shadowBlur = 0; ctx.strokeStyle = hexA(sc, 0.9); ctx.lineWidth = 1.8; ctx.strokeRect(p.x-r, p.y-r, 2*r, 2*r);
+      if (showFill) glyph(ctx, 'spawn', p.x, p.y, Math.min(7, r*0.55), iconCol, 1);
     } else if (p.type === 'dir' || p.type === 'repo' || p.type === 'domain'){   // containers: hollow
-      ctx.shadowBlur = 0; ctx.strokeStyle = hexA(col, 0.75); ctx.lineWidth = 1.6;
+      ctx.shadowBlur = 0; ctx.strokeStyle = hexA(sc, 0.75); ctx.lineWidth = 1.6;
       ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.stroke();
-      kindIcon(ctx, p.type, p.x, p.y, Math.min(6, r*0.6), col, 0.9);
+      if (showFill) kindIcon(ctx, p.type, p.x, p.y, Math.min(6, r*0.6), iconCol, 0.9);
     } else {
-      ctx.fillStyle = hexA(col, 0.20 + 0.25*hot); ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.fill();
-      ctx.shadowBlur = 0; ctx.strokeStyle = hexA(col, 0.85); ctx.lineWidth = 1.8;
+      if (showFill){ ctx.fillStyle = hexA(col, 0.20 + 0.25*hot); ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.fill(); }
+      ctx.shadowBlur = 0; ctx.strokeStyle = hexA(sc, 0.85); ctx.lineWidth = 1.8;
       ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.stroke();
-      if (p.verb) glyph(ctx, p.verb, p.x, p.y, Math.min(5.6, r*0.6)*Math.min(1, p.grow*1.6), p.flash > 0.3 ? '#ffffff' : col, 1);
-      else kindIcon(ctx, p.type, p.x, p.y, Math.min(5.5, r*0.6), col, 0.9);
+      if (showFill){
+        if (p.verb) glyph(ctx, p.verb, p.x, p.y, Math.min(5.6, r*0.6)*Math.min(1, p.grow*1.6), iconCol, 1);
+        else kindIcon(ctx, iconFor(p), p.x, p.y, Math.min(5.5, r*0.6), iconCol, 0.9);
+      }
     }
+    ctx.setLineDash([]);
     if (p.err){ ctx.strokeStyle = '#e66767'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x, p.y, r + 4, 0, 7); ctx.stroke(); }
-    if (p.touches > 1 && !isHub){
-      ctx.fillStyle = hexA(col, .95); ctx.font = 'bold 11px ui-monospace,monospace'; ctx.textAlign = 'center';
+    if (p.ok > 0){                                    // an evaluation came back clean: a second thin ring, own hue, drifting out
+      ctx.strokeStyle = hexA(col, 0.85*p.ok); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r + 7 + (1-p.ok)*7, 0, 7); ctx.stroke();
+    }
+    if (p.touches > 1 && !isHub && showLabel){
+      ctx.fillStyle = hexA(col, .95); ctx.font = 'bold 12px ui-monospace,monospace'; ctx.textAlign = 'center';
       ctx.fillText('×'+p.touches, p.x, p.y + r + 14);
     }
     ctx.restore();
+    if (!showLabel) continue;
 
-    const txt = p.id === MAIN ? 'agent' : String(p.n.label).slice(0,28) + (isHub && p.type==='tool' ? ' ×'+p.touches : '');
+    const txt = p.id === MAIN ? 'agent' : String(p.n.label).slice(0,28) + (inst ? ' ×'+p.touches : '');
     ctx.font = (isHub ? 'bold ' : '') + '13px ui-monospace,monospace';
     const right = p.x >= cx; ctx.textAlign = right ? 'left' : 'right';
     const tw = ctx.measureText(txt).width, lx = right ? p.x + r + 9 : p.x - r - 9, ly = p.y + 4;
@@ -831,19 +1044,25 @@ cv.addEventListener('mousemove', ev => {
   hover = best;
   const tip = $('tip');
   if (!best){ tip.style.display = 'none'; return; }
-  const n = best.n, age = refTime() - best.last;
-  const nb = [];
+  const n = best.n, age = refTime() - best.last, role = roleOf(n);
+  const kind = best.id === MAIN ? 'agent' : best.id === SUB ? 'agent · sidechains'
+             : esc(n.type) + (role ? ' · ' + esc(role) : '') + (isInstrument(best) && n.type !== 'prog' ? ' · instrument' : '');
+  const hist = (best.hist || []).slice().reverse().map(h => `${h.src} —${h.verb}→ ${h.dst}`);
+  const nb = [];                                    // structure: where it sits, what it partners
+  const SAY = {CONTAINS:['holds','in'], IN_REPO:['in','commit'], REMOTE:['remote','remote of'], AGAINST:['against','run against by'],
+               YIELDED:['yielded','found by'], SPAWNED:['spawned','spawned by'], MENTIONS:['mentions','mentioned by'], USED:['used','used by']};
   for (const e of EDGES.values()){
-    if (e.src === best.id && ENT.get(e.dst)) nb.push(`${e.type === 'TOUCH' ? (e.verb||'') : e.type.toLowerCase()} → ${ENT.get(e.dst).n.label}`);
-    else if (e.dst === best.id && ENT.get(e.src)) nb.push(`${ENT.get(e.src).n.label} → ${e.type === 'TOUCH' ? (e.verb||'') : e.type.toLowerCase()}`);
+    if (e.type === 'TOUCH' || !SAY[e.type]) continue;
+    if (e.src === best.id && ENT.get(e.dst)) nb.push(`${SAY[e.type][0]} ${labelOf(ENT.get(e.dst))}`);
+    else if (e.dst === best.id && ENT.get(e.src)) nb.push(`${SAY[e.type][1]} ${labelOf(ENT.get(e.src))}`);
   }
-  tip.innerHTML = `<div class="h" style="color:${COLOR[best.cls]}">${esc(n.type)} · ${esc(n.label)}</div>`+
+  tip.innerHTML = `<div class="h" style="color:${COLOR[best.cls]}">${kind} · ${esc(labelOf(best))}</div>`+
     `<div class="r">${best.touches} touch(es) · ${best.deg} link(s)` + (best.burn ? ` · burned ${fmtUsd(best.burn)}` : '') + `</div>`+
     (best.last > -1e8 ? `<div class="r">last ${age<90?age.toFixed(0)+'s':fmtDur(age)} ago${best.verb?' · '+esc(best.verb):''}</div>` : '')+
     (best.target ? `<div class="r">${esc(String(best.target).slice(0,90))}</div>` : '')+
-    nb.slice(0,7).map(x => `<div class="r" style="color:var(--ink-3)">${esc(x)}</div>`).join('')+
-    (nb.length > 7 ? `<div class="r" style="color:var(--ink-3)">… ${nb.length-7} more</div>` : '')+
-    (best.err ? `<div class="r" style="color:var(--bad)">last call errored</div>` : '');
+    hist.slice(0,6).map(x => `<div class="r">${esc(x)}</div>`).join('')+
+    nb.slice(0,3).map(x => `<div class="r" style="color:var(--ink-3)">${esc(x)}</div>`).join('')+
+    (best.err ? `<div class="r" style="color:var(--bad)">last call failed</div>` : '');
   tip.style.display = 'block';
   tip.style.left = Math.min(innerWidth-390, ev.clientX+14)+'px';
   tip.style.top = Math.min(innerHeight-160, ev.clientY+14)+'px';
@@ -877,10 +1096,10 @@ function drawMap(){
   const ref = refTime(), max = Math.max(...S.map(s=>s.usd), 1e-6);
   const pad = {l:50,r:10,t:10,b:16}, iw = w-pad.l-pad.r, ih = h-pad.t-pad.b;
   $('mapinfo').textContent = 'peak '+fmtUsd(max)+' · '+S.length+' turns · drag the field to scrub';
-  mx2.font='11px ui-monospace,monospace'; mx2.textAlign='right';
-  mx2.strokeStyle='rgba(57,135,229,.22)';
+  mx2.font='12px ui-monospace,monospace'; mx2.textAlign='right';
+  mx2.strokeStyle='rgba(138,148,166,.28)';
   mx2.beginPath(); mx2.moveTo(pad.l,pad.t+ih); mx2.lineTo(w-pad.r,pad.t+ih); mx2.stroke();
-  mx2.fillStyle='#8296ae'; mx2.fillText(fmtUsd(max), pad.l-8, pad.t+8);
+  mx2.fillStyle='#8a94a6'; mx2.fillText(fmtUsd(max), pad.l-8, pad.t+8);
   const bw = Math.max(1.5, iw/S.length - 1.5);
   S.forEach((s,i) => {
     const x = pad.l + (iw/S.length)*i, bh = Math.max(1.5,(s.usd/max)*ih);
