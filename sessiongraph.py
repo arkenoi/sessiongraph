@@ -112,7 +112,10 @@ class SessionGraph:
 
     def __init__(self, attribution="caused", vocab=None):
         self.vocab = vocab if isinstance(vocab, dict) else AB.load_vocab(vocab)
-        self.known = {"vm": set(), "host": set(), "service": set()}   # names seen: a VM stays a VM
+        self.vocab_explicit = bool(vocab)
+        self.vocab_by_cwd = {}
+        self.known_by_session = {}        # names seen, per session: a VM stays a VM
+        self._last_ctx = {}               # per session: the cwd/branch API records name only once
         self._cur_ts = None
         self._prev_uuid = None
         self.seen = set()
@@ -231,11 +234,13 @@ class SessionGraph:
         elif getattr(self, "_last_session", None):
             rec["sessionId"] = self._last_session
         # likewise the working tree: API-shaped records name it once, at the start
+        sid = rec.get("sessionId") or "?"
+        last = self._last_ctx.setdefault(sid, {})
         for k in ("cwd", "gitBranch"):
             if rec.get(k):
-                setattr(self, "_last_" + k, rec[k])
-            elif getattr(self, "_last_" + k, None):
-                rec[k] = getattr(self, "_last_" + k)
+                last[k] = rec[k]
+            elif last.get(k):
+                rec[k] = last[k]
         if not rec.get("parentUuid") and rec.get("uuid"):
             rec["parentUuid"] = self._prev_uuid          # synthesise a linear walk
             self._prev_uuid = rec["uuid"]
@@ -326,8 +331,25 @@ class SessionGraph:
                            "ts": rec.get("timestamp"), "input": self._thin(inp)})
         return hits
 
+    def _known_for(self, rec):
+        """Names seen in *this* session: a VM in one session is not a VM in another."""
+        sid = rec.get("sessionId") or "?"
+        k = self.known_by_session.get(sid)
+        if k is None:
+            k = self.known_by_session[sid] = {"vm": set(), "host": set(), "service": set()}
+        return k
+
+    def _vocab_for(self, cwd):
+        """--vocab wins; otherwise the working tree's own .sessiongraph.json, if any."""
+        if self.vocab_explicit or not cwd:
+            return self.vocab
+        v = self.vocab_by_cwd.get(cwd)
+        if v is None:
+            v = self.vocab_by_cwd[cwd] = AB.load_vocab(cwd=cwd)
+        return v
+
     def _actions(self, name, inp, rec):
-        ctx = AB.Context(cwd=rec.get("cwd"), vocab=self.vocab, known=self.known)
+        ctx = AB.Context(cwd=rec.get("cwd"), vocab=self._vocab_for(rec.get("cwd")), known=self._known_for(rec))
         try:
             return AB.tool_actions(name, inp, ctx)
         except Exception:                      # heuristics never take the parser down
@@ -344,7 +366,10 @@ class SessionGraph:
             role = attrs.pop("role", None)
             return self._file(key, cwd, role=role, **attrs)
         if kind == "dir":
+            if cwd and key.startswith(cwd + os.sep):
+                label = os.path.relpath(key, cwd)
             n = self.node("dir", key, label=label, **attrs)
+            n["touches"] += 1
             self._contain(key, cwd, n["id"])
             return n["id"]
         if kind == "repo":
@@ -358,8 +383,9 @@ class SessionGraph:
                 self.edge(self.node("domain", dm)["id"], n["id"], "CONTAINS")
             return n["id"]
         if kind in ("vm", "host", "service"):
-            self.known[kind].add(key)
+            self._known_for(rec)[kind].add(key)
         n = self.node(kind, key, label=label, **attrs)
+        n["touches"] += 1
         return n["id"]
 
     def _materialize(self, step, acts, rec):
@@ -375,15 +401,17 @@ class SessionGraph:
             verb = a["verb"]
             if src == "agent":
                 self.edge(step["id"], dst, verb.upper(), op=a.get("op"))
+            elif a.get("remote") or a.get("clone"):          # repo -> remote, vm -> its template: structure
+                self.edge(src, dst, "REMOTE" if a.get("remote") else "CLONED")
+                self._link(src, dst, verb)
+                continue
             else:
                 self.edge(step["id"], src, "RAN")
                 self.edge(src, dst, verb.upper(), via=True)
                 if a.get("against"):
                     self.edge(src, dst, "AGAINST")
-                if dst not in hit:
+                if src not in hit:
                     hit.append(src)
-            if a.get("remote"):
-                self.edge(src, dst, "REMOTE")
             self._link(src, dst, verb)
             if dst not in hit:
                 hit.append(dst)
@@ -412,7 +440,7 @@ class SessionGraph:
     def _file(self, path, cwd=None, role=None, **attrs):
         if not path:
             return None
-        if not os.path.isabs(path) and cwd:
+        if not os.path.isabs(path) and cwd and not re.match(r"^[A-Za-z]:[\\/]", path):
             path = os.path.normpath(os.path.join(cwd, path))
         f = self.node("file", path, label=os.path.basename(path),
                       ext=(os.path.splitext(path)[1] or "").lstrip("."), n_touch=1, **attrs)
@@ -478,18 +506,30 @@ class SessionGraph:
         step_id, tool, inp, _hits = self.pending.pop(tid, (None, None, {}, []))
         step = self.nodes.get(step_id) or {"id": step_id or "step:?"}
         res = tur if isinstance(tur, dict) else {}
+        blocks = [c for c in content if isinstance(c, dict) and c.get("type") == "tool_result"] \
+            if isinstance(content, list) else []
+        block_err = any(b.get("is_error") for b in blocks)
         blob = ""
         produced = []
         if "stdout" in res:
             blob = (str(res.get("stdout") or "") + "\n" + str(res.get("stderr") or ""))
-            for branch, sha, subj in COMMIT_RE.findall(blob[:8000]):
-                c = self.node("commit", sha[:7], label=sha[:7], branch=branch, subject=subj[:100])
+        elif isinstance(tur, str):
+            blob = tur
+        if "stdout" in res or isinstance(tur, str):
+            call = next((c for c in reversed(self.calls) if c["id"] == tid), None)
+            found = [(b, sha, subj) for b, sha, subj in COMMIT_RE.findall(blob[:8000])]
+            if not found and call and any(v == "commit" for _, _, v in call["links"]):
+                # `git commit -q` prints nothing; the agent's own `git log --oneline` does
+                m = re.search(r"(?m)^([0-9a-f]{7,12})\s+(\S.*)$", blob[:4000])
+                if m:
+                    found = [(rec.get("gitBranch") or "", m.group(1), m.group(2))]
+            for branch, sha, subj in found[:1]:
+                c = self.node("commit", sha[:7], label=sha[:7], branch=branch or None, subject=subj[:100])
                 self.edge(step["id"], c["id"], "COMMITTED")
                 if rec.get("cwd"):
                     self.edge(c["id"], f"repo:{rec['cwd']}", "IN_REPO")
-                    for call in reversed(self.calls):
-                        if call["id"] == tid:
-                            call["links"].append([f"repo:{rec['cwd']}", c["id"], "commit"]); break
+                    if call:
+                        call["links"].append([f"repo:{rec['cwd']}", c["id"], "commit"])
                 produced.append(c["id"])
         elif "results" in res:                       # WebSearch
             q = (res.get("query") or "")[:160]
@@ -538,9 +578,10 @@ class SessionGraph:
             produced += self._gh(step, blob, "result")
             for c in self.calls:
                 if c["id"] == tid:
-                    c["result_bytes"] = len(json.dumps(res, default=str)) if res else 0
-                    c["is_error"] = bool(res.get("is_error") or res.get("interrupted"))
-                    c["outcome"] = AB.outcome_of(blob, c["is_error"])
+                    c["result_bytes"] = len(json.dumps(res, default=str)) if res else len(blob)
+                    c["is_error"] = bool(res.get("is_error") or res.get("interrupted") or block_err)
+                    acted = any(v in AB.OUTCOME_VERBS for _, _, v in c["links"])
+                    c["outcome"] = AB.outcome_of(blob, c["is_error"]) if (acted or c["is_error"]) else None
                     produced += self._result_rules(step, c, blob, rec)
                     break
         self.last_results += [p for p in produced if p]
@@ -551,18 +592,26 @@ class SessionGraph:
         instrument —verb→ the call's things [—verb→ against]."""
         out = []
         import fnmatch
-        for rule in self.vocab.get("results", []):
+        for rule in self._vocab_for(rec.get("cwd")).get("results", []):
             try:
                 if not re.search(rule["pattern"], blob[:20000]):
                     continue
             except Exception:
                 continue
             name = rule.get("instrument", "hook")
-            # the call already names the instrument on its command line: nothing to add
-            if any(s != "agent" and fnmatch.fnmatch(self.nodes.get(s, {}).get("label", ""), name + "*")
-                   for s, _, _ in call["links"]):
+            score = re.search(rule["score"], blob[:20000]) if rule.get("score") else None
+            # the call already names the instrument on its command line: only keep its score
+            explicit = [s for s, _, _ in call["links"]
+                        if s != "agent" and fnmatch.fnmatch(self.nodes.get(s, {}).get("label", ""), name + "*")]
+            if explicit:
+                if score:
+                    self.nodes[explicit[0]]["attrs"]["last_score"] = score.group(1)
+                continue
+            made = [d for s, d, v in call["links"] if v in ("write", "edit", "commit")]
+            if not made:                       # a tail of an old log is not a new evaluation
                 continue
             inst = self.node("prog", name, label=name)
+            inst["touches"] += 1
             verb = rule.get("verb", "evaluate")
             self.edge(step["id"], inst["id"], "RAN")
             # what it judged: the things this call made or committed
@@ -579,9 +628,8 @@ class SessionGraph:
                 call["links"].append([inst["id"], n["id"], verb])
                 out.append(n["id"])
             out.append(inst["id"])
-            m = re.search(rule.get("score", r"$^"), blob[:20000]) if rule.get("score") else None
-            if m:
-                inst["attrs"]["last_score"] = m.group(1)
+            if score:
+                inst["attrs"]["last_score"] = score.group(1)
         return out
 
     # --- output

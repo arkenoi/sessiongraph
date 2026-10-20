@@ -47,10 +47,10 @@ the world, `0` both.
 
 | verb | dir | from | examples that fold into it |
 |---|---|---|---|
-| read | -1 | cat head tail less sed -n stat ls file jq diff md5sum; Read; git status/log/diff/show; gh pr view; python `read_text` | 
+| read | -1 | cat head tail less sed -n jq diff md5sum; Read; git status/log/diff/show; gh pr view; python `read_text` |
 | search | -1 | grep rg find fd locate; Grep Glob; WebSearch |
 | watch | -1 | tail/grep of a `.log`, `tail -f`, `gh run watch`, `docker logs`, `journalctl -u` |
-| probe | -1 | qvm-check/ls/tags/prefs, docker ps/inspect, virsh list, ping, `/proc/<pid>`, pgrep ps lsof ss, systemctl status, `gh run view`, stat of a log |
+| probe | -1 | qvm-check/ls/tags/prefs, docker ps/inspect, virsh list, ping, `/proc/<pid>`, pgrep ps lsof ss, systemctl status, `gh run view`, stat/ls/file of a file (its existence or size, not its content) |
 | fetch | -1 | curl/wget GET, WebFetch, scp/rsync from, git pull/fetch/clone, docker pull |
 | capture | -1 | qvm-screenshot, `qtest shot`, playwright screenshot/record, ffmpeg from a device |
 | pull | -1 | git pull/fetch/clone/checkout <ref> |
@@ -69,7 +69,11 @@ the world, `0` both.
 | launch | +1 | qvm-start/create/clone, docker run/start, virsh start, vagrant up, systemctl start, nohup/`&`, server.py --port |
 | stop | +1 | qvm-shutdown/kill, docker stop, kill pkill killall, systemctl stop, vagrant halt |
 | spawn | +1 | Agent/Task, Workflow, `claude -p` |
-| skill / mcp | 0 | Skill, mcp__* |
+| skill | 0 | Skill |
+| against | 0 | what an instrument judged against (from the vocabulary): `jev —evaluate→ notes.txt`, `jev —against→ api:claude` |
+
+An MCP call is a `read` (list/get/search ops) or a `call` on the `service`
+that is the MCP server.
 
 ## How a call becomes actions
 
@@ -87,10 +91,16 @@ the world, `0` both.
    paths it names; a **network** fetch/call; a **package** install; or an
    **instrument**: a path that is executed, or `python3 x.py`, `bash x.sh`,
    `node x.js`, or a known program (pytest, make, docker, ffmpeg …).
-6. An instrument gets a verb from its name, subcommand and flags
-   (`shot` → capture, `--selftest`/`test`/`grade`/`jev` → evaluate, `build` →
-   build …) and targets from its arguments: files, URLs, and any **known
-   entity name** (a VM seen earlier in the session, `QTEST_VM=win10-acc`).
+6. An instrument gets a verb, in this order of precedence: a flag that is a
+   verb (`--selftest`, `--check`, `--build`), its subcommand (`qtest shot` →
+   capture, `make test` → evaluate), the vocabulary, then its name (`grade`,
+   `jev`, `lint` → evaluate; `build` → build; `shot` → capture …), else
+   `run`. Other flags never name verbs (`--watch-dir` is not a watch). Its
+   targets come from its arguments: files, URLs, and any **known entity
+   name** (a VM seen earlier in the session, `QTEST_VM=win10-acc`). With no
+   targets the agent simply ran it, unless the verb is evaluate (then it
+   evaluated itself: `grade.py --selftest`) or build/install (then the repo).
+   A `cd dir &&` earlier on the line moves everything after it into `dir`.
 7. A result that says `rc=N`, `PASS`/`FAIL`, `N passed, M failed`,
    `SELFTEST CLEAN|FAILED` marks the call's outcome; a commit hash in the
    result lands a `commit` in the repo; search results yield `url`s.
@@ -115,6 +125,25 @@ the repo root (or `--vocab path`):
 ```
 
 `instruments` keys are glob patterns matched against the instrument's
-basename or repo-relative path; `against` adds `instrument —verb→ entity`.
+basename or repo-relative path; `against` adds `instrument —against→ entity`.
 `entities` maps a kind to name patterns: any argument that matches is that
-kind of thing.
+kind of thing (a `qvm-*` command picks the argument that matches a known VM
+name first). Names and the file are per session and per working tree: a VM
+remembered in one session is not a VM in another, and the file is read from
+the `cwd` the transcript names, so it only works where that tree exists.
+
+A third section, `results`, catches instruments that ran without being on
+the command line (a hook, a pre-commit gate): when a tool result matches
+`pattern` on a call that wrote, edited or committed something, the named
+instrument gets `—verb→` those things (and `—against→` if given), and
+`score` (a regex with one group) is kept on the instrument as `last_score`.
+If the instrument *was* on the command line, only the score is kept.
+
+```json
+{ "results": [
+  {"pattern": "jev-artifact: \\d+ bytes", "instrument": "jev", "verb": "evaluate",
+   "against": "api:claude", "score": "noul=([0-9.]+)"} ] }
+```
+
+Built in: `pre-commit … REFUSED|failed` → `pre-commit —evaluate→` the
+things committed.

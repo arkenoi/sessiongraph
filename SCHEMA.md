@@ -50,15 +50,21 @@ file`, attr `via`) says what it did.
 
 Structural, no step involved:
 `CONTAINS` repo→dir→file, domain→url · `IN_REPO` commit→repo · `REMOTE` repo→gh_repo
-`YIELDED` search→url · `AGAINST` instrument→api/vm it judged against · `MENTIONS` → gh_repo
+`CLONED` vm→its template · `YIELDED` search→url · `AGAINST` instrument→api/vm it
+judged against · `MENTIONS` → gh_repo
 
 Every edge is `(src, dst, type)` with `weight` = number of occurrences, so the
 same file read nine times is one edge of weight 9, not nine edges.
 
-Each tool call is also kept flat in `calls[]` with `links: [[src, dst, verb]…]`
-(`src` is `"agent"` or an instrument's node id), `verb`, `outcome` (`ok` /
-`fail` / null, from `rc=`, `PASS`/`FAIL`, `N passed, M failed`, tracebacks)
-and `is_error`. The HUD animates from `links`.
+Each tool call is also kept flat in `calls[]` with `links: [[src, dst, verb]…]`,
+`verb`, `outcome` and `is_error`. `src` is `"agent"` or an instrument's node
+id; a few links are structural and carry a thing as `src`: `repo —commit→
+commit` (a hash landed), `search —yield→ url` (a result came back), `repo
+—pull→ gh_repo` (a remote named on the line), `vm —pull→ vm` (a clone).
+`outcome` is `ok` / `fail` / null from the last signal in the result (`rc=`,
+`PASS`/`FAIL`, `N passed, M failed`, a traceback), and only for calls that
+acted (a `cat` of a log that says FAIL is not a failed call). The HUD
+animates from `links`.
 
 ## Cost attribution — the part everyone gets wrong
 

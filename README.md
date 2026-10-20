@@ -330,8 +330,8 @@ is the core; everything it touches sits around it:
 
 **Replay.** On load the head starts at the first record and sweeps the whole
 session in about 25 seconds, lighting each touch as it passes and counting the
-tiles up as they stood at the time. Drag the stream to scrub, wheel to zoom the
-time axis, click the session minimap to jump, `Escape` or `Enter` to return to
+tiles up as they stood at the time. Drag the field to scrub, wheel to spread the
+field out or draw it in, click the session minimap to jump, `Escape` or `Enter` to return to
 live, `R` to replay, `[` and `]` for speed, `T` for the table, space to freeze.
 
 ## Static analysis

@@ -25,8 +25,13 @@ VERB_DIR = {
     "read": -1, "search": -1, "watch": -1, "probe": -1, "fetch": -1, "capture": -1,
     "pull": -1, "extract": 0, "evaluate": 0, "run": 0, "call": 0, "edit": 0, "skill": 0,
     "write": 1, "delete": 1, "commit": 1, "push": 1, "revert": 1, "build": 1,
-    "install": 1, "launch": 1, "stop": 1, "spawn": 1,
+    "install": 1, "launch": 1, "stop": 1, "spawn": 1, "against": 0,
 }
+# a result only says ok/fail about calls that *did* something; a cat of a log that
+# says FAIL is not a failed call
+OUTCOME_VERBS = {"evaluate", "run", "build", "install", "launch", "stop", "commit", "push",
+                 "call", "capture", "extract", "pull", "fetch", "edit", "write", "delete",
+                 "revert", "spawn"}
 
 
 def thing(kind, key, label=None, **attrs):
@@ -122,7 +127,7 @@ def load_vocab(path=None, cwd=None):
 
 
 # ----------------------------------------------------------- shell scanning --
-HEREDOC = re.compile(r"<<-?\s*([\"']?)(\w+)\1")
+HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*([\"']?)(\w+)\1")
 ASSIGN = re.compile(r"^([A-Za-z_]\w*)=(.*)$", re.S)
 PLUMBING = {"cd", "export", "set", "true", "false", "echo", "printf", "pushd", "popd",
             "unset", "for", "done", "while", "until", "if", "elif", "fi", "then", "else",
@@ -209,7 +214,7 @@ BUILDERS = {"make", "cmake", "ninja", "meson", "webpack", "rollup", "esbuild", "
             "buck", "scons"}
 AGENTS = {"claude", "codex", "aider", "gemini", "copilot", "cursor-agent", "opencode", "goose"}
 URL_RE = re.compile(r"https?://[^\s\"'<>)\]]+")
-PATHISH = re.compile(r"^(?:~|\.{1,2})?/|^[\w.@+-]+(?:/[\w.@+-]+)+$|^[\w.@+-]+\.[A-Za-z0-9]{1,6}$")
+PATHISH = re.compile(r"^(?:~|\.{1,2})?/|^[\w.@+*?-]+(?:/[\w.@+*?-]*)+$|^[\w.@+*?-]+\.[A-Za-z0-9*?]{1,6}$")
 PROC_RE = re.compile(r"^/proc/(\d+|self)(?:/|$)")
 TASK_RE = re.compile(r"/tasks/([A-Za-z0-9_-]+)\.output$")
 VERSION_FLAG = re.compile(r"^--?(v|version|help|h)$")
@@ -445,6 +450,8 @@ class Context:
         if not path:
             return None
         path = os.path.expanduser(path)
+        if re.match(r"^[A-Za-z]:[\\/]", path):          # a Windows transcript
+            return path
         if not os.path.isabs(path):
             if not self.cwd:
                 return None
@@ -452,12 +459,17 @@ class Context:
         return os.path.normpath(path)
 
 
-def is_pathish(tok):
-    if not tok or tok.startswith("-") or "$" in tok or tok in (".", "..", "/") or "://" in tok:
+def is_pathish(tok, bare=False):
+    """`bare`: the command takes directories, so a plain word (`src`, `.`) counts."""
+    if not tok or tok.startswith("-") or "$" in tok or tok == "/" or "://" in tok:
         return False
+    if tok in (".", ".."):
+        return bare
     if re.search(r"[\s^,;|&<>\"'()`{}=]", tok):      # a sed script, a regex, an assignment: not a path
         return False
     if tok.startswith(("/", "./", "../", "~/")):
+        return True
+    if bare and re.fullmatch(r"[\w.@+*?-]+/?", tok) and not tok.isdigit():
         return True
     return bool(PATHISH.match(tok)) and not tok.endswith(":")
 
@@ -497,7 +509,11 @@ def file_thing(ctx, tok, role=None, prefer_dir=False):
 
 def dir_thing(ctx, tok):
     p = ctx.resolve(tok)
-    return thing("dir", p, label=file_label(p)) if p else None
+    if not p:
+        return None
+    if ctx.cwd and p == ctx.cwd:
+        return thing("repo", p, label=file_label(p))
+    return thing("dir", p, label=file_label(p))
 
 
 def url_thing(u):
@@ -536,6 +552,12 @@ def pathlike_targets(ctx, args, limit=4, prefer_dir=True):
     return out
 
 
+FLAG_VERBS = {"--selftest": "evaluate", "--self-test": "evaluate", "--check": "evaluate", "--test": "evaluate",
+              "--lint": "evaluate", "--verify": "evaluate", "--dry-run": "evaluate", "--validate": "evaluate",
+              "--build": "build", "--install": "install", "--serve": "launch", "--watch": "watch",
+              "--capture": "capture", "--screenshot": "capture", "--record": "capture"}
+
+
 def verb_for_name(name, rest=""):
     hay = f"{name} {rest}".lower()
     for pat, verb in NAME_VERBS:
@@ -549,8 +571,9 @@ def instrument_actions(ctx, inst, name, args, flags, relpath=None):
     acts = []
     spec = ctx.vocab_instrument(name, relpath) or {}
     sub = next((a for a in args if not a.startswith("-")), "")
-    opts = " ".join(a for a in args if a.startswith("-"))
-    verb = spec.get("verb") or verb_for_name(name, f"{sub} {opts}") or "run"
+    flag_verb = next((FLAG_VERBS[a.split("=")[0]] for a in args if a.split("=")[0] in FLAG_VERBS), None)
+    sub_verb = verb_for_name("", sub) if sub and not is_pathish(sub) else None
+    verb = flag_verb or sub_verb or spec.get("verb") or verb_for_name(name) or "run"
     if flags.get("bg") and verb == "run":
         verb = "launch"
     targets = []
@@ -573,14 +596,14 @@ def instrument_actions(ctx, inst, name, args, flags, relpath=None):
     if targets:
         for t in targets[:5]:
             acts.append(action(inst, verb, t))
-    else:
-        acts[0]["verb"] = verb if verb != "run" else "run"
-        if verb in ("build", "install", "evaluate") and inst["kind"] == "prog" and ctx.cwd:
-            acts.append(action(inst, verb, thing("repo", ctx.cwd, label=file_label(ctx.cwd))))
+    elif verb == "evaluate":                    # `grade.py --selftest`: the script tests itself
+        acts[0]["verb"] = "evaluate"
+    elif verb in ("build", "install") and ctx.cwd:
+        acts.append(action(inst, verb, thing("repo", ctx.cwd, label=file_label(ctx.cwd))))
     against = spec.get("against")
     if against and ":" in against:
         k, _, key = against.partition(":")
-        acts.append(action(inst, verb, thing(k, key), against=True))
+        acts.append(action(inst, "against", thing(k, key), against=True))
     return acts
 
 
@@ -597,9 +620,12 @@ def code_actions(ctx, code, lang="python"):
         if p in seen or not is_pathish(p):
             continue
         seen.add(p)
+        base = p.rstrip("/").split("/")[-1]
+        if not os.path.splitext(base)[1] and p.count("/") < 2:      # '/sessions', '/select': a route
+            continue
         t = file_thing(ctx, p)
         if t:
-            acts.append(action("agent", "edit" if writes else "read", t))
+            acts.append(action("agent", "edit" if writes and t["kind"] == "file" else "read", t))
         if len(acts) >= 5:
             break
     for u in URL_RE.findall(code)[:3]:
@@ -672,7 +698,7 @@ def gh_actions(ctx, args):
     grp, sub, rest = a[0], (a[1] if len(a) > 1 else ""), a[2:]
     repo_flag = next((rest[i + 1] for i, r in enumerate(rest) if r in ("-R", "--repo") and i + 1 < len(rest)), None)
     repo_flag = repo_flag or next((r.split("=", 1)[1] for r in rest if r.startswith("--repo=")), None)
-    num = next((r for r in rest if r.isdigit()), None)
+    num = next((r for r in strip_flag_values(rest, {"-L", "--limit", "-q", "--jq", "--json", "-R", "--repo", "-t", "--template", "-s", "--state", "-l", "--label", "-a", "--assignee", "-B", "--base", "-H", "--head", "-b", "--body", "-F", "--body-file", "-m", "--milestone", "-p", "--project", "-r", "--reviewer", "-w", "--workflow"}) if r.isdigit()), None)
     gh = thing("gh_repo", repo_flag) if repo_flag else None
     local = thing("repo", ctx.cwd, label=file_label(ctx.cwd)) if ctx.cwd else None
     where = gh or local
@@ -744,6 +770,29 @@ VM_OPS = {
 }
 
 
+DOCKER_VALUED = {"-v", "--volume", "-p", "--publish", "-e", "--env", "-w", "--workdir", "-u", "--user",
+                 "-c", "--cpus", "-m", "--memory", "--network", "--net", "--mount", "-l", "--label",
+                 "--entrypoint", "--platform", "--restart", "--env-file", "--hostname", "-h", "--add-host",
+                 "--device", "--gpus", "--tmpfs", "--log-driver", "--log-opt", "--cap-add", "--cap-drop",
+                 "--security-opt", "--ulimit", "--shm-size", "--pid", "--ipc", "--expose", "--dns", "-f",
+                 "--file", "--format", "--filter", "--target", "--build-arg", "--since", "--tail", "-n"}
+QVM_VALUED = {"-u", "--user", "-p", "--pass-io", "--dispvm", "-c", "--class", "-t", "--template", "-l",
+              "--label", "-P", "--pool", "--property", "--prop", "-f", "--filter", "--fields", "-O"}
+
+
+def strip_flag_values(args, valued):
+    """Drop `-v X` pairs (and `--flag=x`) so a flag's value is never taken for a name."""
+    out, i = [], 0
+    while i < len(args):
+        a = args[i]
+        if a in valued and i + 1 < len(args):
+            i += 2; continue
+        if a.startswith("--") and "=" in a:
+            i += 1; continue
+        out.append(a); i += 1
+    return out
+
+
 def vm_actions(ctx, base, args, flags):
     """Hypervisors, container runtimes, orchestrators: a verb on a machine."""
     acts = []
@@ -751,9 +800,9 @@ def vm_actions(ctx, base, args, flags):
     if base.startswith("qvm-") or base.startswith("qubes-"):
         op = base.split("-", 1)[1]
         rest = args
-        if op == "run":
-            rest = [a for a in args if not a.startswith("-")]
-        name = next((a for a in rest if not a.startswith("-")), None)
+        rest = strip_flag_values(args, QVM_VALUED)
+        name = next((a for a in rest if not a.startswith("-") and (ctx.entity_for_name(a) or {}).get("kind") == "vm"), None) \
+            or next((a for a in rest if not a.startswith("-")), None)
         if op == "clone" and len([a for a in args if not a.startswith("-")]) >= 2:
             src, dst = [a for a in args if not a.startswith("-")][:2]
             ctx.remember("vm", src); ctx.remember("vm", dst)
@@ -795,7 +844,7 @@ def vm_actions(ctx, base, args, flags):
         name = next((rest[i + 1] for i, r in enumerate(rest) if r == "--name" and i + 1 < len(rest)), None) \
             or next((x.split("=", 1)[1] for x in rest if x.startswith("--name=")), None)
         if not name:
-            name = next((x for x in rest if not x.startswith("-")), None)
+            name = next((x for x in strip_flag_values(rest, DOCKER_VALUED) if not x.startswith("-")), None)
         verb = "launch" if op == "run" else VM_OPS.get(op, "probe")    # docker run = start a container
     elif base == "virsh":
         op = next((x for x in args if not x.startswith("-")), "")
@@ -813,8 +862,9 @@ def vm_actions(ctx, base, args, flags):
             return [action("agent", "probe", thing("host", "virtualbox", label="virtualbox"))]
     elif base in ("vagrant", "multipass", "limactl", "orb", "colima", "minikube", "kind"):
         op = next((x for x in args if not x.startswith("-")), "")
-        rest = args[args.index(op) + 1:] if op in args else []
-        name = next((x for x in rest if not x.startswith("-")), None) or base
+        rest = strip_flag_values(args[args.index(op) + 1:] if op in args else [], {"-c", "--cpus", "-m", "--memory", "-d", "--disk", "-n", "--name"})
+        name = next((rest[i + 1] for i, r in enumerate(args) if r in ("-n", "--name") and i + 1 < len(args)), None) \
+            or next((x for x in rest if not x.startswith("-")), None) or base
         verb = VM_OPS.get(op, "probe")
     elif base in ("kubectl", "oc", "helm", "k9s"):
         op = next((x for x in args if not x.startswith("-")), "")
@@ -928,11 +978,11 @@ def process_actions(ctx, base, args):
     def plain(pat):      # `[s]erver\.py --root` -> `server.py --root`: a name, not a regex
         return re.sub(r"\[(\w)\]", r"\1", pat).replace("\\.", ".").replace(".*", "…").strip("^$")[:40]
     if base in ("kill", "pkill", "killall"):
-        tgt = next((x for x in args if not x.startswith("-")), None)
+        tgt = next((x for x in args if not x.startswith("-") and "$" not in x and "{" not in x), None)
         if tgt:
             return [action("agent", "stop", thing("process", plain(tgt), label=f"pid {tgt}" if tgt.isdigit() else plain(tgt)))]
     if base in ("pgrep", "pidof"):
-        tgt = next((x for x in args if not x.startswith("-")), None)
+        tgt = next((x for x in args if not x.startswith("-") and "$" not in x and "{" not in x), None)
         if tgt:
             return [action("agent", "probe", thing("process", plain(tgt), label=plain(tgt)))]
     if base in ("wait",):
@@ -1008,7 +1058,16 @@ def segment_actions(ctx, toks, flags):
         if ASSIGN.match(t0):
             toks = toks[1:]; continue
         if t0 in PEEL:
-            toks = toks[1:]; continue
+            toks = toks[1:]
+            if t0 in ("sudo", "doas", "env", "command", "builtin"):
+                while toks and toks[0].startswith("-"):
+                    if t0 == "command" and toks[0] in ("-v", "-V"):
+                        return acts                     # `command -v ffmpeg`: a which, not a run
+                    if toks[0] in ("-u", "-g", "-C", "-D", "-R", "-T", "-p", "-r", "-h", "--host", "--user", "--group", "--chdir") and len(toks) > 1:
+                        toks = toks[2:]
+                    else:
+                        toks = toks[1:]
+            continue
         if t0 in PEEL_ARG:
             toks = toks[1:]
             while toks and (toks[0].startswith("-") or re.fullmatch(r"\d+[smhd]?", toks[0])):
@@ -1028,7 +1087,7 @@ def segment_actions(ctx, toks, flags):
                 if t:
                     acts.append(action("agent", "probe", t)); break
         return acts
-    if VERSION_FLAG.match(args[0]) if args else False:
+    if len(args) == 1 and args[0] in ("--version", "--help", "-V", "-version", "-help"):
         return acts
     if base == "git" or bbase == "git":
         return acts + git_actions(ctx, args)
@@ -1059,7 +1118,14 @@ def segment_actions(ctx, toks, flags):
         return acts + interp_actions(ctx, bbase, args, flags)
     if bbase in WRITERS or (bbase == "sed" and any(a.startswith("-i") for a in args)):
         verb = WRITERS.get(bbase, "edit")
-        paths = [a for a in args if is_pathish(a) and not a.startswith("-")]
+        if bbase == "sed":
+            args = [a for a in args if not a.startswith("-i")]
+            if not any(a in ("-e", "-f", "--expression") or a.startswith("-e") for a in args):
+                first = next((i for i, a in enumerate(args) if not a.startswith("-")), None)
+                if first is not None:
+                    args = args[:first] + args[first + 1:]          # the script is not a file
+        recursive = any(a.startswith("-") and not a.startswith("--") and ("r" in a[1:] or "R" in a[1:]) for a in args)
+        paths = [a for a in args if is_pathish(a, bare=recursive) and not a.startswith("-")]
         if bbase in ("cp", "mv", "ln", "install") and len(paths) >= 2:
             for p in paths[:-1]:
                 t = file_thing(ctx, p)
@@ -1069,7 +1135,6 @@ def segment_actions(ctx, toks, flags):
             if t:
                 acts.append(action("agent", "write", t))
             return acts
-        recursive = any(a.startswith("-") and not a.startswith("--") and ("r" in a[1:] or "R" in a[1:]) for a in args)
         for p in paths[:4]:
             t = file_thing(ctx, p, prefer_dir=recursive)
             if t:
@@ -1078,13 +1143,17 @@ def segment_actions(ctx, toks, flags):
     if bbase in SEARCHERS and bbase not in ("ls", "tree"):
         recursive = bbase in ("find", "fd", "fdfind", "rg", "ag", "ack") or any(
             a.startswith("-") and not a.startswith("--") and "r" in a[1:] for a in args) or "--recursive" in args
-        paths = [a for a in args if is_pathish(a) and not a.startswith("-")]
+        paths = [a for a in args if is_pathish(a, bare=recursive) and not a.startswith("-")]
+        if bbase in ("grep", "egrep", "fgrep", "rg", "ag", "ack") and paths and not any(a in ("-e", "--regexp", "-f") for a in args):
+            first = next((i for i, a in enumerate(args) if not a.startswith("-")), None)
+            if first is not None and args[first] in paths and not os.path.splitext(args[first])[1] and "/" not in args[first]:
+                paths = [p for p in paths if p != args[first]]        # the pattern, not a path
         if bbase in ("find", "fd", "fdfind"):
             paths = []
             for a in args:
                 if a.startswith("-"):
                     break
-                if is_pathish(a):
+                if is_pathish(a, bare=True):
                     paths.append(a)
         if not paths and bbase in ("find", "fd", "fdfind", "rg", "ag") and ctx.cwd:
             paths = ["."]
@@ -1099,7 +1168,7 @@ def segment_actions(ctx, toks, flags):
             first = next((i for i, a in enumerate(args) if not a.startswith("-")), None)
             if first is not None:
                 args = args[:first] + args[first + 1:]          # the script is not a file
-        paths = [a for a in args if is_pathish(a) and not a.startswith("-")]
+        paths = [a for a in args if is_pathish(a, bare=bbase in ("ls", "tree", "du")) and not a.startswith("-")]
         for p in paths[:4]:
             t = file_thing(ctx, p, prefer_dir=bbase in ("ls", "tree", "du"))
             if not t:
@@ -1168,10 +1237,15 @@ def interp_actions(ctx, base, args, flags):
     lang = "python" if base.startswith("py") else ("js" if base in ("node", "nodejs", "deno", "bun", "ts-node", "tsx") else base)
     code = None
     i = 0
+    shellish = base in ("bash", "sh", "zsh", "dash", "ksh", "fish")
     while i < len(a):
         t = a[i]
-        if t in ("-c", "-e", "--eval", "-Command", "-command") and i + 1 < len(a):
+        if t in ("-c", "-e", "--eval", "-Command", "-command", "-p", "--print") and i + 1 < len(a) and not (t == "-p" and not lang == "js"):
             code = a[i + 1]; break
+        if shellish and re.fullmatch(r"-[a-z]*c[a-z]*", t) and i + 1 < len(a):     # bash -lc 'cmd'
+            code = a[i + 1]; break
+        if t in ("-W", "-X", "-Q", "-r", "--require", "--import", "--loader", "-I", "--inspect-port") and i + 1 < len(a) and not (t == "-I" and lang == "python"):
+            i += 2; continue
         if t == "-m" and i + 1 < len(a):
             mod = a[i + 1]
             if mod in ("http.server", "SimpleHTTPServer"):
@@ -1208,8 +1282,21 @@ def bash_actions(command, ctx):
     acts = []
     if not command or not command.strip():
         return acts
+    home = ctx.cwd
     for toks, flags in split_shell(command):
         if flags.get("funcdef") or (toks and toks[0] == "function"):
+            continue
+        if toks and toks[0] in ("cd", "pushd"):              # the rest of the line lives there
+            tgt = next((t for t in toks[1:] if not t.startswith("-")), None)
+            if tgt in (None, "~", "-"):
+                ctx.cwd = home if tgt != "-" else ctx.cwd
+            elif "$" not in tgt:
+                p = ctx.resolve(tgt)
+                if p:
+                    ctx.cwd = p
+            continue
+        if toks and toks[0] == "popd":
+            ctx.cwd = home
             continue
         heredoc = flags.get("heredoc")
         if heredoc is not None and toks and toks[0] in ("cat", "tee") and not any(t in (">", ">>") for t in toks):
@@ -1222,6 +1309,7 @@ def bash_actions(command, ctx):
             acts += segment_actions(ctx, toks, flags)
         except Exception:      # a heuristic must never take the parser down
             continue
+    ctx.cwd = home
     # de-duplicate (same src, verb, dst), keep order
     seen, out = set(), []
     for a in acts:
@@ -1300,11 +1388,16 @@ def outcome_of(blob, is_error=False):
     if not blob:
         return None
     head = blob[:20000]
-    m = re.search(r"\b(\d+) passed, (\d+) failed\b", head)
-    if m:
-        return "fail" if int(m.group(2)) else "ok"
-    if re.search(r"SELFTEST FAILED|^rc=[1-9]\d*$|^FAIL\b|Traceback \(most recent|AssertionError|command not found|panicked at", head, re.M):
-        return "fail"
-    if re.search(r"SELFTEST CLEAN|^rc=0$|^PASS\b|\b\d+ passed\b|^ok\b|All checks passed|BUILD SUCCESS|Build succeeded", head, re.M):
-        return "ok"
-    return None
+    signals = []                     # (position, verdict): the last word wins
+    for m in re.finditer(r"\b(\d+) passed, (\d+) failed\b", head):
+        signals.append((m.start(), "fail" if int(m.group(2)) else "ok"))
+    for m in re.finditer(r"(?m)^(?:rc|exit(?: code| status)?)=(\d+)\s*$", head):
+        signals.append((m.start(), "fail" if int(m.group(1)) else "ok"))
+    for m in re.finditer(r"(?m)^(?:SELFTEST FAILED|FAIL(?:ED)?\b(?!\w)|Traceback \(most recent call last\)|.*: command not found\s*$|"
+                         r"AssertionError\b|thread '.*' panicked at|FATAL:|ERROR:)", head):
+        signals.append((m.start(), "fail"))
+    for m in re.finditer(r"(?m)^(?:SELFTEST CLEAN|PASS(?:ED)?\b(?!\w)|ok\s*$|ok\s+[^:=]|OK\s*$|All checks passed|BUILD SUCCESS|Build succeeded)", head):
+        signals.append((m.start(), "ok"))
+    if not signals:
+        return None
+    return max(signals)[1]

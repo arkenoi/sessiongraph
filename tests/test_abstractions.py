@@ -53,7 +53,7 @@ ok &= check("a test script under tools/tests evaluates", acts("bash tools/tests/
 ok &= check("vocab: jev evaluates against an api",
             acts("tools/jev-artifact.sh rubric.json notes.txt -- 'git diff'",
                  vocab={"instruments": {"jev-*": {"verb": "evaluate", "against": "api:claude"}}, "entities": {}, "_compiled": {}}),
-            ("jev-artifact.sh", "evaluate", "file", "notes.txt"), ("jev-artifact.sh", "evaluate", "api", "claude"))
+            ("jev-artifact.sh", "evaluate", "file", "notes.txt"), ("jev-artifact.sh", "against", "api", "claude"))
 ok &= check("curl GET is a fetch of an api", acts("curl -sS https://api.github.com/repos/a/b -H 'x: y'"),
             ("agent", "fetch", "api", "api.github.com/repos/a"))
 ok &= check("curl POST is a call", acts("curl -X POST -d '{}' http://127.0.0.1:8777/ingest"),
@@ -80,5 +80,30 @@ ok &= check("plumbing alone is nothing", acts("echo \"now: $(date -u)\"; sleep 2
 ok &= check("outcome: rc=1 fails", [A.outcome_of("citation corrected\npre-commit REFUSED\nrc=1\n")], "fail")
 ok &= check("outcome: passed counts", [A.outcome_of("x: 13 passed, 0 failed")], "ok")
 ok &= check("outcome: silence is neither", [A.outcome_of("hello\nworld")], None)
+ok &= check("cd inside the line moves relative paths", acts("cd /opt/other && python3 run.py --out o.txt"),
+            ("agent", "run", "file", "run.py"))
+ok &= check("cd keys the script under the other tree",
+            [a for a in A.bash_actions("cd /opt/other && python3 run.py", A.Context(cwd=CWD)) if a["dst"]["key"] == "/opt/other/run.py"],
+            *[a for a in A.bash_actions("cd /opt/other && python3 run.py", A.Context(cwd=CWD)) if a["dst"]["key"] == "/opt/other/run.py"][:1])
+ok &= check("-v is verbose, not --version", acts("pytest -v tests/"), ("pytest", "evaluate", "dir", "tests"))
+ok &= check("flags do not name verbs: a watcher launch keeps its port",
+            acts("python3 server.py --watch-dir /tmp/pump --port 8782 &"),
+            ("agent", "launch", "file", "server.py"), ("server.py", "launch", "service", "localhost:8782"))
+ok &= check("a no-target script is just run, whatever its name", acts("./clean.sh"), ("agent", "run", "file", "clean.sh"))
+ok &= check("sed -i script is not a file", [a for a in acts("sed -i 's/foo/bar/g' x.py") if a[3] != "x.py"])
+ok &= check("sed -i edits the file", acts("sed -i 's/foo/bar/g' x.py"), ("agent", "edit", "file", "x.py"))
+ok &= check("sudo -u peels its value", acts("sudo -u postgres psql -c 'select 1'"), ("agent", "run", "prog", "psql"))
+ok &= check("docker -v value is not the container", acts("docker run -v $PWD:/w -p 8080:80 --name web nginx"),
+            ("agent", "launch", "vm", "web"))
+ok &= check("docker flag value never becomes a VM", [a for a in acts("docker run -v /x:/w -e A=1 nginx:1") if a[3] in ("/x:/w", "A=1")])
+ok &= check("gh --limit is not a PR number", acts("gh pr list --limit 5"), ("agent", "read", "repo", "proj"))
+ok &= check("grep -r over . searches the repo", acts("grep -rn 'foo' ."), ("agent", "search", "repo", "proj"))
+ok &= check("grep pattern word is not a path", [a for a in acts("grep -rn needle src") if a[3] == "needle"])
+ok &= check("bash -lc runs the inner command", acts("bash -lc 'git status'"), ("agent", "read", "repo", "proj"))
+ok &= check("python route literals are not files", [a for a in acts("python3 - <<'PY'\ns=open('server.py').read().replace('/select','/pick')\nopen('server.py','w').write(s)\nPY") if a[3] in ("select", "pick")])
+ok &= check("here-string is not a heredoc", acts("grep -c x <<< 'x y' ; cat a.py"), ("agent", "read", "file", "a.py"))
+ok &= check("outcome: the last signal wins", [A.outcome_of("3 passed, 0 failed\nlater\nrc=1")], "fail")
+ok &= check("outcome: 'ok: false' is not ok", [A.outcome_of("ok: false")], None)
+ok &= check("outcome: a mention of AssertionError mid-line is not a failure", [A.outcome_of("grep found AssertionError in 3 files")], None)
 print("ALL OK" if ok else "FAILURES")
 sys.exit(0 if ok else 1)
