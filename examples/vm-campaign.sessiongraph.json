@@ -1,0 +1,18 @@
+{
+  "_comment": "Illustrative vocabulary for a project whose agent drives VMs and launches a long test suite in the background. Names are made up; see abstractions.vm_state_text and campaign.py.",
+  "entities": {
+    "vm": ["^(build|test)-vm$"]
+  },
+  "vm_states": [
+    {"pattern": "lock acquired vm=(?P<vm>[\\w-]+)", "state": "running"},
+    {"pattern": "parked (?P<vm>[\\w-]+)", "state": "halted"}
+  ],
+  "campaign": {
+    "order": ["install", "upgrade", "smoke-test"],
+    "vm": {"install": "build-vm", "upgrade": "build-vm", "smoke-test": "test-vm"},
+    "start": "suite pid=\\d+ started (?P<time>\\d\\d:\\d\\d:\\d\\d)Z",
+    "end": "SUITE EXIT|ABORTED",
+    "last_phase_minutes": 60,
+    "serial": true
+  }
+}

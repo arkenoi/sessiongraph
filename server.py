@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sessiongraph import SessionGraph, find_sessions  # noqa: E402
 import abstractions as AB  # noqa: E402
+from campaign import Campaign  # noqa: E402
 VOCAB = AB.load_vocab()
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -171,6 +172,9 @@ class Tailer:
         self.active_step = None
         self.step_ids = set()
         self.seen_models = []
+        self.vmstate = {}        # vm name -> {"state", "ts", "why"}: the last the agent saw
+        self.vm_pending = {}     # tool_use_id -> (tool, [(vm, state, why)]) until its result lands
+        self.campaign = Campaign(VOCAB.get("campaign"))
 
     # -- ingest
     def _ingest_line(self, line):
@@ -188,6 +192,7 @@ class Tailer:
         ts = parse_ts(norm.get("timestamp"))
         if ts:
             self.last_ts = max(self.last_ts or 0, ts)
+        self._observe_vms(norm, ts)
         if norm.get("type") == "assistant":
             uid = f"step:{norm.get('uuid')}"
             if uid in self.step_ids:            # a re-posted page: already counted
@@ -205,6 +210,38 @@ class Tailer:
                                    "n_tools": n["attrs"].get("n_tools", 0),
                                    "think_ms": n["attrs"].get("thinking_ms"),
                                    "text": n["attrs"].get("text_preview")})
+
+    def _is_vm(self, name):
+        if f"vm:{name}" in self.g.nodes or name in self.vmstate:
+            return True
+        return any(r.match(name) for r in VOCAB.get("_compiled", {}).get("vm", []))
+
+    def _observe_vms(self, norm, ts):
+        """Run state as the agent saw it: its qvm/qrexec calls (applied when the
+        call succeeds) and the state lines its Bash commands printed."""
+        msg = norm.get("message") or {}
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if not isinstance(content, list) or not ts:
+            return
+        for c in content:
+            if not isinstance(c, dict):
+                continue
+            if c.get("type") == "tool_use":
+                cmd = (c.get("input") or {}).get("command") if c.get("name") == "Bash" else None
+                self.vm_pending[c.get("id")] = (c.get("name"), AB.vm_state_commands(cmd) if cmd else [])
+            elif c.get("type") == "tool_result":
+                tool, calls = self.vm_pending.pop(c.get("tool_use_id"), (None, []))
+                if tool != "Bash":                     # a Read of a script is not a VM starting
+                    continue
+                seen = [] if c.get("is_error") else list(calls)
+                body = c.get("content")
+                if isinstance(body, list):
+                    body = "\n".join(b.get("text", "") for b in body if isinstance(b, dict))
+                body = body if isinstance(body, str) else ""
+                seen += AB.vm_state_text(body, self._is_vm, VOCAB.get("_vm_states", []))
+                self.campaign.observe(body, ts)
+                for name, state, why in seen:
+                    self.vmstate[name] = {"state": state, "ts": ts, "why": why}
 
     def poll(self):
         if self.watch_dir:
@@ -410,6 +447,28 @@ class Tailer:
             status = ("executing" if inflight else
                       "live" if idle is not None and idle < 12 else
                       "awaiting you" if idle is not None and idle < 900 else "idle")
+            vms = dict(self.vmstate)
+            camp = self.campaign.project(now) if self.campaign.enabled else None
+            if camp and not camp["over"]:               # what the campaign is driving, unless seen since
+                for name in camp["vms"]:
+                    up = name == camp["vm"]
+                    if not up and not camp["serial"]:
+                        continue
+                    seen = vms.get(name)
+                    if seen and seen["ts"] > camp["since"]:
+                        continue
+                    vms[name] = {"state": "running" if up else "halted", "ts": camp["since"], "projected": True,
+                                 "why": f"campaign {camp['how']}: {camp['phase']} since ~"
+                                        f"{datetime.fromtimestamp(camp['since'], timezone.utc):%H:%M} · {camp['basis']}"}
+            for n in d["nodes"]:
+                name = n["id"].split(":", 1)[-1]
+                if n["type"] == "vm" and name in vms:
+                    n["attrs"] = {**n.get("attrs", {}), **{"vm_" + k: v for k, v in vms[name].items()}}
+            have = {n["id"] for n in d["nodes"]}
+            for name, st in vms.items():                # running, but never acted on: still worth a body
+                if st["state"] == "running" and f"vm:{name}" not in have:
+                    d["nodes"].append({"id": f"vm:{name}", "type": "vm", "label": name,
+                                       "attrs": {"vm_" + k: v for k, v in st.items()}})
             sess = next((n for n in d["nodes"] if n["type"] == "session"), None)
             return {
                 "nodes": d["nodes"], "edges": d["edges"], "totals": tot,
@@ -426,6 +485,7 @@ class Tailer:
                     "file": os.path.basename(self.path), "now": now,
                     "last_text": last.get("text"), "think_ms": last.get("think_ms"),
                     "active_step": self.active_step,
+                    "campaign": camp,
                     "t_start": min((s["ts"] for s in self.steps if s.get("ts")), default=None),
                     "t_end": self.last_ts,
                 },
