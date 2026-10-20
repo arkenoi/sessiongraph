@@ -16,6 +16,8 @@ counted and skipped, never fatal.
 import argparse, json, os, re, sys, time
 from collections import Counter, defaultdict
 
+import abstractions as AB
+
 # ---------------------------------------------------------------- pricing ---
 # USD per million tokens: (input, output, cache_write_5m, cache_write_1h, cache_read)
 # Cache writes are 1.25x input at the 5-minute TTL and 2x at 1-hour. Cache reads
@@ -89,92 +91,6 @@ def price(model, usage):
 GH_RE = re.compile(r"github\.com[/:]([A-Za-z0-9][\w.-]*)/([\w.-]+?)(?:\.git)?(?=[/\s\"')\]]|$)")
 PR_RE = re.compile(r"github\.com/([\w.-]+)/([\w.-]+)/(pull|issues)/(\d+)")
 COMMIT_RE = re.compile(r"\[([^\s\]]+)\s+([0-9a-f]{7,40})\]\s*(.*)")
-CMD_HEAD = re.compile(r"^\s*(?:\w+=\S*\s+)*([\w./-]+)(?:\s+([\w:-]+))?")
-MULTI = {"git", "gh", "npm", "pnpm", "yarn", "cargo", "docker", "kubectl", "uv", "pip", "go", "make"}
-# Shell plumbing that is never what the step was "about".
-BORING = {"cd", "export", "set", "source", ".", "true", "false", "echo", "pushd", "popd",
-          "unset", "for", "done", "while", "until", "if", "elif", "fi", "case", "esac",
-          "in", "function", "break", "continue", "return", "exit", "shift", "trap", "wait"}
-# Grammar words that *precede* the real command: peel them off, don't drop the segment.
-PEEL = {"do", "then", "else", "time", "exec", "eval", "nohup", "sudo", "command", "env"}
-
-
-HEREDOC = re.compile(r"<<-?\s*[\"\']?(\w+)[\"\']?")
-
-
-def strip_shell(command):
-    """Remove heredoc bodies, quoted strings and URLs before parsing a bash line.
-
-    Without this, the *contents* of `cat > f <<EOF ... EOF` and `python3 -c "..."`
-    get split on `;` and `|` and every `import`/`for`/`const` in the payload shows
-    up as a command node. (Found by looking at the rendered graph.)
-    """
-    if not command:
-        return ""
-    for _ in range(12):                  # a single bash call can carry several
-        m = HEREDOC.search(command)
-        if not m:
-            break
-        term = m.group(1)
-        head = command[:m.start()]
-        rest = command[m.end():].split("\n")
-        tail, closed = [], False
-        for ln in rest[1:]:
-            if closed:
-                tail.append(ln)
-            elif ln.strip() == term:
-                closed = True
-        command = head + "\n" + "\n".join(tail)
-    # command substitution: surface the inner command as its own segment
-    command = command.replace("$(", " ; ").replace("`", " ; ")
-    command = re.sub(r"https?://\S+", " ", command)
-    command = re.sub(r"'[^']*'|\"[^\"]*\"", " ", command)
-    return command
-
-
-def cmd_labels(command, limit=3):
-    """A bash call is often a pipeline. Return the commands that carry meaning,
-    skipping `cd foo &&` / `VAR=x` prefixes that otherwise dominate the graph."""
-    command = strip_shell(command)
-    if not command.strip():
-        return []
-    out, seen = [], set()
-    for seg in re.split(r"&&|\|\||[;|]|\n", command):
-        seg = seg.strip().lstrip("(").lstrip(")")
-        seg = re.sub(r"^(?:\w+=\S*\s*)+", "", seg)      # VAR=x VAR2=y cmd ...
-        if not seg or seg.startswith(("#", "-")):
-            continue
-        base = None
-        for _ in range(4):                      # `do sleep 1`, `sudo nohup foo`
-            m = CMD_HEAD.match(seg)
-            if not m:
-                base = None
-                break
-            base = os.path.basename(m.group(1))
-            if base in PEEL:
-                seg = seg[m.end(1):].strip()
-                continue
-            break
-        if not base or base in BORING or base in PEEL or "=" in base or len(base) < 2:
-            continue
-        if not re.fullmatch(r"[\w.+-]{2,40}", base):
-            continue
-        m = CMD_HEAD.match(seg)
-        sub = m.group(2)
-        lbl = f"{base} {sub}" if base in MULTI and sub and not sub.startswith("-") else base
-        if lbl not in seen:
-            seen.add(lbl)
-            out.append(lbl)
-        if len(out) >= limit:
-            break
-    return out
-
-
-def cmd_label(command):
-    labels = cmd_labels(command, 1)
-    return labels[0] if labels else None
-
-
 def domain_of(url):
     m = re.match(r"https?://([^/]+)", url or "")
     return (m.group(1).lower() if m else None)
@@ -191,56 +107,12 @@ def epoch(ts):
         return None
 
 
-# ------------------------------------------------------------------ verbs ---
-# What was DONE, as distinct from what it was done to. Colour carries the kind
-# of thing (3 validated hues); the verb is carried by glyph + direction.
-# dir: -1 data came back to the agent, +1 data went out, 0 both/neither.
-VERB_DIR = {"read":-1, "search":-1, "fetch":-1, "pull":-1, "list":-1,
-            "write":1, "edit":0, "delete":1, "push":1, "commit":1,
-            "execute":0, "spawn":1, "skill":0, "mcp":0, "note":1}
-CMD_VERB = {
-    "cat":"read", "head":"read", "tail":"read", "less":"read", "more":"read",
-    "wc":"read", "ls":"read", "du":"read", "df":"read", "stat":"read",
-    "file":"read", "diff":"read", "readlink":"read", "jq":"read", "awk":"read",
-    "grep":"search", "rg":"search", "find":"search", "fd":"search", "locate":"search",
-    "mkdir":"write", "touch":"write", "cp":"write", "mv":"write", "tee":"write",
-    "sed":"write", "chmod":"write", "chown":"write", "ln":"write", "truncate":"write",
-    "rm":"delete", "rmdir":"delete", "unlink":"delete", "shred":"delete",
-    "curl":"fetch", "wget":"fetch", "scp":"fetch", "rsync":"fetch",
-    "git commit":"commit", "git push":"push", "git tag":"commit", "git merge":"commit",
-    "git pull":"pull", "git fetch":"pull", "git clone":"pull", "git checkout":"pull",
-    "git status":"read", "git log":"read", "git diff":"read", "git show":"read",
-    "gh pr":"push", "gh release":"push", "gh api":"fetch", "gh repo":"pull",
-}
-TOOL_VERB = {
-    "Read":"read", "NotebookRead":"read", "Write":"write", "Edit":"edit",
-    "NotebookEdit":"edit", "Grep":"search", "Glob":"search", "WebSearch":"search",
-    "WebFetch":"fetch", "Task":"spawn", "Agent":"spawn", "Skill":"skill",
-    "TodoWrite":"note", "ToolSearch":"search", "Artifact":"push",
-}
-
-
-def verb_of(tool, inp):
-    """One verb per call. Bash is refined by what the command actually does."""
-    if tool in TOOL_VERB:
-        return TOOL_VERB[tool]
-    if tool and tool.startswith("mcp__"):
-        return "mcp"
-    if tool == "Bash":
-        for lbl in cmd_labels(inp.get("command") if isinstance(inp, dict) else None, 4):
-            if lbl in CMD_VERB:
-                return CMD_VERB[lbl]
-            base = lbl.split(" ")[0]
-            if base in CMD_VERB:
-                return CMD_VERB[base]
-        return "execute"
-    return "execute"
-
-
 class SessionGraph:
     """Incremental builder. Feed it records; ask for nodes/edges any time."""
 
-    def __init__(self, attribution="caused"):
+    def __init__(self, attribution="caused", vocab=None):
+        self.vocab = vocab if isinstance(vocab, dict) else AB.load_vocab(vocab)
+        self.known = {"vm": set(), "host": set(), "service": set()}   # names seen: a VM stays a VM
         self._cur_ts = None
         self._prev_uuid = None
         self.seen = set()
@@ -319,11 +191,15 @@ class SessionGraph:
             if isinstance(body, dict):
                 r = dict(body)
                 r.update(r.pop("internal_anthropic_catchall", None) or {})
+                cwd = r.get("cwd")
+                wic = r.get("wire_ingest_context")      # {tool_use_id: {cwd}} on API records
+                if not cwd and isinstance(wic, dict):
+                    cwd = next((v.get("cwd") for v in wic.values() if isinstance(v, dict) and v.get("cwd")), None)
                 out = {"type": role, "message": r.get("message"),
                        "uuid": r.get("uuid"),
                        "timestamp": r.get("timestamp") or rec.get("created_at"),
                        "sessionId": r.get("session_id") or r.get("sessionId"),
-                       "cwd": r.get("cwd"), "gitBranch": r.get("gitBranch"),
+                       "cwd": cwd, "gitBranch": r.get("gitBranch"),
                        "requestedModel": (r.get("message") or {}).get("model"),
                        "thinkingDurationMs": r.get("thinking_duration_ms"),
                        "isSidechain": bool(r.get("parent_tool_use_id")),
@@ -354,6 +230,12 @@ class SessionGraph:
             self._last_session = rec["sessionId"]
         elif getattr(self, "_last_session", None):
             rec["sessionId"] = self._last_session
+        # likewise the working tree: API-shaped records name it once, at the start
+        for k in ("cwd", "gitBranch"):
+            if rec.get(k):
+                setattr(self, "_last_" + k, rec[k])
+            elif getattr(self, "_last_" + k, None):
+                rec[k] = getattr(self, "_last_" + k)
         if not rec.get("parentUuid") and rec.get("uuid"):
             rec["parentUuid"] = self._prev_uuid          # synthesise a linear walk
             self._prev_uuid = rec["uuid"]
@@ -433,14 +315,91 @@ class SessionGraph:
         name = block.get("name") or "?"
         inp = block.get("input") if isinstance(block.get("input"), dict) else {}
         tid = block.get("id")
-        tool = self.node("tool", name, n_calls=1)
-        self.edge(step["id"], tool["id"], "USED", tool=name)
-        hits = self._entities(step, name, inp, rec)
+        self._links = []                      # what this call wired to what, and how
+        acts = self._actions(name, inp, rec)
+        hits = self._materialize(step, acts, rec)
+        verbs = [a["verb"] for a in acts if a["src"] != "agent"] or [a["verb"] for a in acts]
+        verb = Counter(verbs).most_common(1)[0][0] if verbs else "run"
         self.pending[tid] = (step["id"], name, inp, hits)
         self.calls.append({"id": tid, "step": step["id"], "tool": name, "nodes": hits,
-                           "verb": verb_of(name, inp),
+                           "links": self._links, "verb": verb,
                            "ts": rec.get("timestamp"), "input": self._thin(inp)})
         return hits
+
+    def _actions(self, name, inp, rec):
+        ctx = AB.Context(cwd=rec.get("cwd"), vocab=self.vocab, known=self.known)
+        try:
+            return AB.tool_actions(name, inp, ctx)
+        except Exception:                      # heuristics never take the parser down
+            return []
+
+    def _thing(self, t, rec):
+        """A classifier `thing` -> node id, with its structure (repo ⊃ dir ⊃ file,
+        domain ⊃ url) wired in."""
+        if not t:
+            return None
+        kind, key, label, attrs = t["kind"], t["key"], t.get("label"), dict(t.get("attrs") or {})
+        cwd = rec.get("cwd")
+        if kind == "file":
+            role = attrs.pop("role", None)
+            return self._file(key, cwd, role=role, **attrs)
+        if kind == "dir":
+            n = self.node("dir", key, label=label, **attrs)
+            self._contain(key, cwd, n["id"])
+            return n["id"]
+        if kind == "repo":
+            n = self.node("repo", key, label=label or os.path.basename(key),
+                          branch=rec.get("gitBranch") if key == cwd else None)
+            return n["id"]
+        if kind == "url":
+            dm = attrs.pop("domain", None) or domain_of(key)
+            n = self.node("url", key, label=label, **attrs)
+            if dm:
+                self.edge(self.node("domain", dm)["id"], n["id"], "CONTAINS")
+            return n["id"]
+        if kind in ("vm", "host", "service"):
+            self.known[kind].add(key)
+        n = self.node(kind, key, label=label, **attrs)
+        return n["id"]
+
+    def _materialize(self, step, acts, rec):
+        """actions -> nodes, step edges (verb-typed), and the call's links."""
+        hit = []
+        for a in acts:
+            dst = self._thing(a["dst"], rec)
+            if not dst:
+                continue
+            src = "agent" if a["src"] == "agent" else self._thing(a["src"], rec)
+            if not src:
+                continue
+            verb = a["verb"]
+            if src == "agent":
+                self.edge(step["id"], dst, verb.upper(), op=a.get("op"))
+            else:
+                self.edge(step["id"], src, "RAN")
+                self.edge(src, dst, verb.upper(), via=True)
+                if a.get("against"):
+                    self.edge(src, dst, "AGAINST")
+                if dst not in hit:
+                    hit.append(src)
+            if a.get("remote"):
+                self.edge(src, dst, "REMOTE")
+            self._link(src, dst, verb)
+            if dst not in hit:
+                hit.append(dst)
+        return hit
+
+    def _link(self, src, dst, verb):
+        """A call's own structure: tool -> command -> file, tool -> repo, ..."""
+        if src and dst and src != dst:
+            self._links.append([src, dst, verb])
+
+    def _repo_for(self, rec):
+        cwd = rec.get("cwd")
+        if not cwd:
+            return None
+        return self.node("repo", cwd, label=os.path.basename(cwd) or cwd,
+                         branch=rec.get("gitBranch"))
 
     @staticmethod
     def _thin(inp):
@@ -450,22 +409,35 @@ class SessionGraph:
             out[k] = sv if not isinstance(sv, str) or len(sv) <= 400 else sv[:400] + "…"
         return out
 
-    def _file(self, step, path, verb, cwd=None):
+    def _file(self, path, cwd=None, role=None, **attrs):
         if not path:
             return None
         if not os.path.isabs(path) and cwd:
             path = os.path.normpath(os.path.join(cwd, path))
         f = self.node("file", path, label=os.path.basename(path),
-                      ext=(os.path.splitext(path)[1] or "").lstrip("."), n_touch=1)
+                      ext=(os.path.splitext(path)[1] or "").lstrip("."), n_touch=1, **attrs)
         f["touches"] += 1
-        self.edge(step["id"], f["id"], verb, tool=verb)
-        d = os.path.dirname(path)
+        if role:                              # a file that is run becomes a tool for good
+            if role == "tool" or not f["attrs"].get("role"):
+                f["attrs"]["role"] = role
+        self._contain(path, cwd, f["id"])
+        return f["id"]
+
+    def _contain(self, path, cwd, nid):
+        d = os.path.dirname(path.rstrip("/"))
         repo_id = f"repo:{cwd}" if cwd and path.startswith(str(cwd) + os.sep) else None
         if repo_id and repo_id in self.nodes:
-            self.edge(repo_id, f["id"], "CONTAINS")
-        elif d:
-            self.edge(self.node("dir", d, label=os.path.basename(d) or d)["id"], f["id"], "CONTAINS")
-        return f["id"]
+            if d and d != cwd:                              # repo ⊃ dir ⊃ file
+                dn = self.node("dir", d, label=os.path.relpath(d, cwd))
+                self.edge(repo_id, dn["id"], "CONTAINS")
+                if dn["id"] != nid:
+                    self.edge(dn["id"], nid, "CONTAINS")
+            elif nid != repo_id:
+                self.edge(repo_id, nid, "CONTAINS")
+        elif d and d not in ("/", ""):
+            dn = self.node("dir", d, label=os.path.basename(d) or d)
+            if dn["id"] != nid:
+                self.edge(dn["id"], nid, "CONTAINS")
 
     def _gh(self, step, text, source):
         out = []
@@ -486,65 +458,6 @@ class SessionGraph:
             self.edge(step["id"], n["id"], "MENTIONS")
             out.append(n["id"])
         return out
-
-    def _entities(self, step, name, inp, rec):
-        cwd = rec.get("cwd")
-        hit = []
-        if name in ("Read", "NotebookEdit"):
-            hit.append(self._file(step, inp.get("file_path") or inp.get("notebook_path"), "READ", cwd))
-        elif name == "Write":
-            hit.append(self._file(step, inp.get("file_path"), "WROTE", cwd))
-        elif name == "Edit":
-            hit.append(self._file(step, inp.get("file_path"), "EDITED", cwd))
-        elif name in ("Grep", "Glob"):
-            tgt = inp.get("path") or cwd
-            if tgt:
-                n = self.node("dir", tgt, label=os.path.basename(str(tgt)) or str(tgt))
-                self.edge(step["id"], n["id"], "GREPPED", pattern=str(inp.get("pattern"))[:120])
-                hit.append(n["id"])
-        elif name == "Bash":
-            for lbl in cmd_labels(inp.get("command")):
-                n = self.node("command", lbl, n_runs=1)
-                self.edge(step["id"], n["id"], "RAN", cmd=str(inp.get("command"))[:200])
-                hit.append(n["id"])
-            # file paths named on the command line are real touches too
-            for tok in re.findall(r"(?<![\w:-])((?:/|\./|~/)[\w./@+-]{2,})",
-                                  strip_shell(inp.get("command")))[:6]:
-                if not tok.endswith("/") and os.path.splitext(tok)[1]:
-                    hit.append(self._file(step, os.path.expanduser(tok), "READ", cwd))
-            hit += self._gh(step, inp.get("command"), "bash")
-        elif name == "WebSearch":
-            q = (inp.get("query") or "").strip()
-            if q:
-                n = self.node("search", q[:160], label=q[:60], engine="web")
-                self.edge(step["id"], n["id"], "SEARCHED")
-                hit.append(n["id"])
-        elif name == "WebFetch":
-            u = inp.get("url")
-            if u:
-                n = self.node("url", u[:400], label=(domain_of(u) or u)[:40])
-                self.edge(step["id"], n["id"], "FETCHED")
-                dm = domain_of(u)
-                if dm:
-                    self.edge(self.node("domain", dm)["id"], n["id"], "CONTAINS")
-                hit.append(n["id"])
-            hit += self._gh(step, u, "fetch")
-        elif name in ("Agent", "Task"):
-            a = inp.get("subagent_type") or "general-purpose"
-            n = self.node("agent", a, n_spawns=1)
-            self.edge(step["id"], n["id"], "SPAWNED", desc=str(inp.get("description"))[:80])
-            hit.append(n["id"])
-        elif name == "Skill":
-            n = self.node("skill", inp.get("skill") or "?", n_uses=1)
-            self.edge(step["id"], n["id"], "USED")
-            hit.append(n["id"])
-        elif name.startswith("mcp__"):
-            parts = name.split("__")
-            if len(parts) >= 2:
-                n = self.node("mcp", parts[1], n_calls=1)
-                self.edge(step["id"], n["id"], "CALLED", tool=name)
-                hit.append(n["id"])
-        return [h for h in hit if h]
 
     def _user(self, rec):
         tur = rec.get("toolUseResult")
@@ -574,6 +487,9 @@ class SessionGraph:
                 self.edge(step["id"], c["id"], "COMMITTED")
                 if rec.get("cwd"):
                     self.edge(c["id"], f"repo:{rec['cwd']}", "IN_REPO")
+                    for call in reversed(self.calls):
+                        if call["id"] == tid:
+                            call["links"].append([f"repo:{rec['cwd']}", c["id"], "commit"]); break
                 produced.append(c["id"])
         elif "results" in res:                       # WebSearch
             q = (res.get("query") or "")[:160]
@@ -585,12 +501,16 @@ class SessionGraph:
                     if u:
                         urls.append(u)
             for u in urls[:40]:
-                un = self.node("url", u[:400], label=(domain_of(u) or u)[:40])
+                ut = AB.url_thing(u) or {"kind": "url", "key": u[:400], "label": (domain_of(u) or u)[:40]}
+                un = self.node(ut["kind"], ut["key"], label=ut["label"])
                 dm = domain_of(u)
                 if dm:
                     self.edge(self.node("domain", dm)["id"], un["id"], "CONTAINS")
                 if sn:
                     self.edge(sn["id"], un["id"], "YIELDED")
+                    for call in reversed(self.calls):
+                        if call["id"] == tid:
+                            call["links"].append([sn["id"], un["id"], "yield"]); break
             if sn:
                 sn["attrs"]["n_results"] = len(urls)
                 sn["attrs"]["duration_s"] = res.get("durationSeconds")
@@ -610,14 +530,59 @@ class SessionGraph:
                 fn["attrs"]["n_lines"] = fi.get("numLines")
                 fn["attrs"]["bytes_in"] = len(str(fi.get("content") or ""))
                 produced.append(fn["id"])
+        if not blob and isinstance(content, list):
+            blob = " ".join(str(c.get("content") if not isinstance(c.get("content"), list) else
+                                " ".join(x.get("text", "") for x in c["content"] if isinstance(x, dict)))
+                            for c in content if isinstance(c, dict) and c.get("type") == "tool_result")
         if step_id:
             produced += self._gh(step, blob, "result")
             for c in self.calls:
                 if c["id"] == tid:
                     c["result_bytes"] = len(json.dumps(res, default=str)) if res else 0
                     c["is_error"] = bool(res.get("is_error") or res.get("interrupted"))
+                    c["outcome"] = AB.outcome_of(blob, c["is_error"])
+                    produced += self._result_rules(step, c, blob, rec)
                     break
         self.last_results += [p for p in produced if p]
+
+    def _result_rules(self, step, call, blob, rec):
+        """Vocabulary `results` rules: text in a result that proves an instrument
+        ran (a hook that graded the file just written, say) becomes
+        instrument —verb→ the call's things [—verb→ against]."""
+        out = []
+        import fnmatch
+        for rule in self.vocab.get("results", []):
+            try:
+                if not re.search(rule["pattern"], blob[:20000]):
+                    continue
+            except Exception:
+                continue
+            name = rule.get("instrument", "hook")
+            # the call already names the instrument on its command line: nothing to add
+            if any(s != "agent" and fnmatch.fnmatch(self.nodes.get(s, {}).get("label", ""), name + "*")
+                   for s, _, _ in call["links"]):
+                continue
+            inst = self.node("prog", name, label=name)
+            verb = rule.get("verb", "evaluate")
+            self.edge(step["id"], inst["id"], "RAN")
+            # what it judged: the things this call made or committed
+            targets = [d for s, d, v in call["links"] if v in ("write", "edit", "commit")
+                       and self.nodes.get(d, {}).get("type") in ("file", "repo", "commit")][:3]
+            for t in targets:
+                self.edge(inst["id"], t, verb.upper(), via=True)
+                call["links"].append([inst["id"], t, verb])
+            ag = rule.get("against")
+            if ag and ":" in ag:
+                k, _, key = ag.partition(":")
+                n = self.node(k, key, label=key)
+                self.edge(inst["id"], n["id"], "AGAINST")
+                call["links"].append([inst["id"], n["id"], verb])
+                out.append(n["id"])
+            out.append(inst["id"])
+            m = re.search(rule.get("score", r"$^"), blob[:20000]) if rule.get("score") else None
+            if m:
+                inst["attrs"]["last_score"] = m.group(1)
+        return out
 
     # --- output
     def to_dict(self):
@@ -729,11 +694,14 @@ def report(g):
     L.append("node mix: " + "  ".join(f"{k}×{v}" for k, v in by_type.most_common()))
     L.append("edge mix: " + "  ".join(f"{k}×{v}" for k, v in
                                       Counter(e["type"] for e in d["edges"]).most_common()))
-    tools = sorted((n for n in d["nodes"] if n["type"] == "tool"),
-                   key=lambda n: -n["attrs"].get("n_calls", 0))
-    if tools:
-        L.append("tools: " + "  ".join(f"{n['label']}×{n['attrs'].get('n_calls',0)}" for n in tools[:12]))
-    ents = sorted((n for n in d["nodes"] if n["type"] not in ("step", "session", "tool")),
+    inst = sorted((n for n in d["nodes"] if n["type"] == "prog" or n["attrs"].get("role") == "tool"),
+                  key=lambda n: -n["touches"])
+    if inst:
+        L.append("instruments: " + "  ".join(f"{n['label']}×{n['touches']}" for n in inst[:12]))
+    verbs = Counter(e["type"].lower() for e in d["edges"] if e["type"].lower() in AB.VERB_DIR)
+    if verbs:
+        L.append("verbs: " + "  ".join(f"{k}×{v}" for k, v in verbs.most_common()))
+    ents = sorted((n for n in d["nodes"] if n["type"] not in ("step", "session")),
                   key=lambda n: -n["usd"])
     if ents:
         L.append("\ntop entities by attributed cost (%s):" % d["attribution"])
@@ -787,12 +755,13 @@ def main():
     ap.add_argument("--no-steps", action="store_true", help="--dot: entities only")
     ap.add_argument("--attribution", choices=["caused", "context"], default="caused")
     ap.add_argument("--root", help="override ~/.claude/projects")
+    ap.add_argument("--vocab", help="project vocabulary (.sessiongraph.json), see ABSTRACTIONS.md")
     a = ap.parse_args()
 
     paths = a.paths or find_sessions(a.root)[: (None if a.all else a.n)]
     if not paths:
         sys.exit("no transcripts found; pass a path or --root")
-    g = SessionGraph(attribution=a.attribution)
+    g = SessionGraph(attribution=a.attribution, vocab=a.vocab)
     for p in paths:
         for rec in iter_records(p):
             g.ingest(rec)

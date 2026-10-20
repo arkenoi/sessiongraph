@@ -1,15 +1,27 @@
 # sessiongraph
 
-Your Claude Code session as a live graph walk: tools, files, commands, commits,
-searches, URLs and GitHub repos as nodes, with token burn priced per model.
+Your Claude Code session as a live graph: the agent acting on the things it
+works with — repos, files, VMs, services, APIs, processes, searches — through
+a small set of verbs (read, edit, commit, evaluate, launch, probe, capture…),
+sometimes via an instrument (a test harness, a build, a project tool), with
+token burn priced per model.
 
-Three pieces:
+Four pieces:
 
 | file | what it is |
 |---|---|
-| `SCHEMA.md` | the node/edge model and the cost-attribution argument |
-| `sessiongraph.py` | transcript -> graph (JSON / graphviz DOT / text report). Stdlib only |
+| `ABSTRACTIONS.md` | what the graph is made of: the kinds of things, the verbs, and how a tool call becomes actions |
+| `abstractions.py` | the classifier that turns a tool call into `actor —verb→ thing` (and `instrument —verb→ thing`). Stdlib only |
+| `sessiongraph.py` | transcript -> graph (JSON / graphviz DOT / text report) |
 | `server.py` + `hud.html` | tails the live session and serves the HUD |
+
+There is no "git commit" node: there is a **commit** verb on the **repository**.
+There is no `jev-artifact.sh` node by its filename: there is an **instrument**
+that **evaluates** the file just written, **against** an API. `tail matrix.log`
+is a **watch** of that **log**; `qvm-check --running win10-acc` is a **probe**
+of that **VM**; the `echo`/`cut`/`date` around them is folded away. A repo can
+teach the classifier its own tools and names with a `.sessiongraph.json`
+(`--vocab`); `examples/qwt.sessiongraph.json` shows one.
 
 ## Quickstart
 
@@ -297,9 +309,11 @@ is the core; everything it touches sits around it:
 - **Size is what it burned.** Each call's turn cost is split across what it
   touched and accumulates on the body, scaled against the heaviest thing on
   screen, so the expensive parts of a session are literally the big ones.
-- **Each kind gets a slice of the circle in proportion to how much of it there
-  is**, so twenty-five commands are not crushed into the same wedge as three
-  files, and bodies push each other apart rather than stacking.
+- **It is a graph, not a star.** Files sit inside their folders inside their
+  repo; an instrument sits between the agent and what it acted on (`qtest
+  —capture→ win10-acc`, `jev —evaluate→ controls.txt —against→ api`); a
+  search yields its URLs; a commit lands in its repo; the universe holds the
+  most recent few dozen things and lets the rest drift past the rim and fade.
 - **How a thing arrives says what happened.** Something the agent *makes* — a
   write, a commit, a push, a spawn — is thrown out of the core and swells as it
   flies. Something that already existed and is only now *reached for* — a read, a
@@ -307,8 +321,10 @@ is the core; everything it touches sits around it:
 - **A body with a call running on it pulses**, with a halo expanding off it;
   everything else recent breathes faintly, so the field is never dead still
   while work is happening.
-- Colour is the kind of thing, the glyph is the verb, and a red ring means the
-  call failed.
+- Colour is the kind of thing (blue acts, amber is made, magenta is the world
+  beyond the working tree), the icon is what kind of thing it is (a VM, a log,
+  a test, an API, a process), the glyph on the edge is the verb, and a red ring
+  means the call failed or the evaluation came back FAIL.
 
 
 

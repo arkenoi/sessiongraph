@@ -10,3 +10,7 @@ __pycache__/
 .DS_Store
 *.webm
 *.mp4
+
+# project vocabularies are not transcripts
+!examples/*.json
+!.sessiongraph.json

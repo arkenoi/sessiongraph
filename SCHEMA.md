@@ -4,11 +4,14 @@ A Claude Code session is two graphs layered on one another:
 
 1. **The walk** — a DAG of conversation steps, linked by `parentUuid`. It branches
    wherever you rewound or edited a prompt, so it is a tree, not a line.
-2. **The entity graph** — the things the walk touched: files, commands, commits,
-   searches, URLs, GitHub repos, subagents, skills. These are shared *across*
-   sessions, which is what makes the graph worth having.
+2. **The entity graph** — the things the walk acted on: repos, files, VMs,
+   services, APIs, processes, searches, URLs, GitHub repos, subagents, and the
+   instruments it acted through. These are shared *across* sessions, which is
+   what makes the graph worth having.
 
 Steps carry the money. Entities carry the meaning. Edges carry the verb.
+What counts as an entity and a verb is defined in `ABSTRACTIONS.md`; this
+file is the storage shape.
 
 ## Node types
 
@@ -16,35 +19,46 @@ Steps carry the money. Entities carry the meaning. Edges carry the verb.
 |---|---|---|
 | `session` | `session:<uuid>` | cwd, branch, models, started, ended, turns, usd, tokens |
 | `step` | `step:<uuid>` | role, ts, model, effort, usd, tokens{in,out,cache_r,cache_w}, thinking_ms, sidechain, n_tools, text_preview |
-| `tool` | `tool:<Name>` | calls, errors, usd_attributed (a *type*, aggregated) |
-| `file` | `file:<abspath>` | ext, reads, writes, edits, bytes_in, repo |
-| `dir` | `dir:<abspath>` | files |
-| `repo` | `repo:<root>` | branch, commits, files |
-| `gh_repo` | `gh_repo:<owner/name>` | mentions, source (fetch/search/clone/pr) |
-| `commit` | `commit:<sha7>` | branch, subject, repo |
-| `command` | `cmd:<git commit\|npm\|…>` | runs, exit_nonzero (bash head, 2 tokens for git/npm/cargo/gh) |
-| `search` | `search:<query>` | engine, results, duration_s |
-| `url` | `url:<url>` | bytes, status, domain |
-| `domain` | `domain:<host>` | fetches, urls |
 | `agent` | `agent:<subagent_type>` | spawns |
+| `prog` | `prog:<name>` | a named program used as an instrument (pytest, make, docker, pre-commit) |
 | `skill` | `skill:<name>` | invocations |
-| `mcp` | `mcp:<server>` | tools, calls |
+| `repo` | `repo:<cwd>` | branch; every git/gh verb lands here |
+| `dir` | `dir:<abspath>` | |
+| `file` | `file:<abspath>` | ext, **role** (source doc config ci test log media archive data scratch tool), n_lines, bytes_in |
+| `commit` | `commit:<sha7>` | branch, subject |
+| `vm` | `vm:<name>` | a guest: qvm-*, virsh, VBoxManage, vagrant, multipass, docker |
+| `host` | `host:<name>` | a machine reached by ssh/scp/ping; `localhost` is this box |
+| `service` | `service:<id>` | a listening endpoint (`localhost:8777`), a unit, an MCP server, compose |
+| `api` | `api:<host/prefix>` | an HTTP API family |
+| `url` / `domain` | `url:<url>` / `domain:<host>` | bytes, status |
+| `search` | `search:<query>` | engine, n_results, duration_s |
+| `gh_repo` / `pr` / `issue` / `run` | `gh_repo:<o/r>` … | GitHub remote, PR, issue, Actions run |
+| `process` | `process:<pid\|task>` | a pid or a background task |
+| `package` | `package:<name>` | something installed |
+
+Every node carries `touches`, `usd` (attributed), `t0`/`t1` (first/last seen).
 
 ## Edge types
 
-Steps → steps: `PARENT` (the walk; reverse it for chronology).
-Steps → everything else, with `tool` + `ts` on the edge:
+Steps → steps: `PARENT` (the walk; reverse it for chronology). `IN_SESSION` step→session.
 
-`READ` `WROTE` `EDITED` → file · `GREPPED` → dir/file · `RAN` → command
-`SEARCHED` → search · `FETCHED` → url · `SPAWNED` → agent · `USED` → skill/tool
-`CALLED` → mcp · `COMMITTED` → commit · `MENTIONS` → gh_repo
+Steps → things, typed by **verb** (upper-cased): `READ SEARCH WATCH PROBE FETCH
+CAPTURE PULL EXTRACT EVALUATE RUN CALL EDIT WRITE DELETE COMMIT PUSH REVERT
+BUILD INSTALL LAUNCH STOP SPAWN SKILL`. `RAN` step→instrument marks that the
+step ran an instrument; the instrument's own verb edge (`instrument —EVALUATE→
+file`, attr `via`) says what it did.
 
 Structural, no step involved:
-`CONTAINS` repo→file, dir→file, domain→url · `IN_REPO` commit→repo
-`YIELDED` search→url · `TOUCHED` commit→file · `IN_SESSION` step→session
+`CONTAINS` repo→dir→file, domain→url · `IN_REPO` commit→repo · `REMOTE` repo→gh_repo
+`YIELDED` search→url · `AGAINST` instrument→api/vm it judged against · `MENTIONS` → gh_repo
 
 Every edge is `(src, dst, type)` with `weight` = number of occurrences, so the
 same file read nine times is one edge of weight 9, not nine edges.
+
+Each tool call is also kept flat in `calls[]` with `links: [[src, dst, verb]…]`
+(`src` is `"agent"` or an instrument's node id), `verb`, `outcome` (`ok` /
+`fail` / null, from `rc=`, `PASS`/`FAIL`, `N passed, M failed`, tracebacks)
+and `is_error`. The HUD animates from `links`.
 
 ## Cost attribution — the part everyone gets wrong
 

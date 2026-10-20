@@ -1,0 +1,19 @@
+{
+  "_comment": "Project vocabulary for the Qubes Windows tools session. Copy to the repo root as .sessiongraph.json or pass --vocab. See ABSTRACTIONS.md.",
+  "instruments": {
+    "jev-*":           {"verb": "evaluate", "against": "api:claude"},
+    "tools/qtest":     {"verb": "capture"},
+    "wu-e2e*":         {"verb": "evaluate"},
+    "template-update-test*": {"verb": "evaluate"},
+    "toast-hold-test*": {"verb": "evaluate"},
+    "lint-harness*":   {"verb": "evaluate"}
+  },
+  "entities": {
+    "vm":   ["^win1[01][a-z]*-[a-z0-9-]+$", "^dom0$", "^win-idd-mgmt$"],
+    "host": ["^rig$"]
+  },
+  "results": [
+    {"pattern": "jev-artifact: \\d+ bytes", "instrument": "jev", "verb": "evaluate",
+     "against": "api:claude", "score": "noul=([0-9.]+)"}
+  ]
+}

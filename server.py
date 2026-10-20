@@ -15,6 +15,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sessiongraph import SessionGraph, find_sessions  # noqa: E402
+import abstractions as AB  # noqa: E402
+VOCAB = AB.load_vocab()
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -146,7 +148,7 @@ class Tailer:
         self.path = path
         self.off = 0
         self.buf = b""
-        self.g = SessionGraph()
+        self.g = SessionGraph(vocab=VOCAB)
         self.steps = []          # ordered step snapshots for the burn series
         self.last_ts = None
         self.active_step = None
@@ -362,6 +364,7 @@ class Tailer:
                                "err": bool(c.get("is_error")), "nodes": c.get("nodes") or [],
                                "verb": c.get("verb") or "execute",
                                "sidechain": step_side.get(c["step"], False),
+                               "links": c.get("links") or [], "outcome": c.get("outcome"),
                                "usd": step_usd.get(c["step"], 0.0) / max(1, per_step.get(c["step"], 1))})
             recent = events[-26:]
             last = self.steps[-1] if self.steps else {}
@@ -586,9 +589,12 @@ def main():
                                         "(JSON array or JSONL); re-run every --interval "
                                         "seconds. It carries its own credentials.")
     ap.add_argument("--interval", type=float, default=0.5, help="poll seconds")
+    ap.add_argument("--vocab", help="project vocabulary (.sessiongraph.json): instruments, entity names, result rules")
     ap.add_argument("--no-follow", action="store_true",
                     help="stay on one file instead of jumping to the newest session")
     a = ap.parse_args()
+    global VOCAB
+    VOCAB = AB.load_vocab(a.vocab)
     path = a.file or (find_sessions(a.root) or [None])[0]
     if a.watch_dir:
         os.makedirs(a.watch_dir, exist_ok=True)
