@@ -120,6 +120,7 @@ def load_vocab(path=None, cwd=None):
             v.setdefault("entities", {})
             v["results"] = list(v.get("results") or []) + DEFAULT_RESULTS
             v["_compiled"] = {k: [re.compile(p) for p in pats] for k, pats in v["entities"].items()}
+            v["_vm_states"] = [(re.compile(r["pattern"]), r["state"]) for r in v.get("vm_states") or []]
             return v
         except Exception:
             continue
@@ -380,11 +381,14 @@ def split_shell(command):
     flush_seg()
 
     # expand VAR=value assignments seen earlier in the command, attach heredocs
-    env, out = {}, []
+    env, loops, out = {}, {}, []
     for toks, fl in segs:
         def sub(s):
             return re.sub(r"\$\{(\w+)\}|\$(\w+)",
                           lambda m: env.get(m.group(1) or m.group(2), m.group(0)), s)
+        used = [v for v in loops if any(re.search(r"\$\{?%s\b" % v, t) for t in toks)]
+        if used:                       # a loop body: bash_actions runs it once per item
+            fl["each"] = (used[0], loops[used[0]], list(toks), dict(env))
         toks = [sub(t) for t in toks]
         k = 0
         while k < len(toks):
@@ -402,6 +406,8 @@ def split_shell(command):
             if items:
                 env[toks[1]] = items[0]
                 fl["loop"] = (toks[1], items)
+                if not any("$" in i or "*" in i for i in items):   # literal items only
+                    loops[toks[1]] = items
         hd = [t for t in toks if t.startswith("__HEREDOC") and t.endswith("__")]
         if hd:
             idx = int(hd[0][9:-2])
@@ -422,6 +428,9 @@ class Context:
         self.cwd = cwd
         self.vocab = vocab or {"instruments": {}, "entities": {}, "_compiled": {}}
         self.known = known if known is not None else {"vm": set(), "host": set(), "service": set()}
+        # copies the agent made (`cp a.c /tmp/x/a.c`, `cp -r src work`): copy path -> what it copies.
+        # Kept with the session's names, so a copy is its original in every later call
+        self.copies = self.known.setdefault("copies", {})
 
     def remember(self, kind, name):
         if kind in self.known and name:
@@ -445,6 +454,17 @@ class Context:
             if fnmatch.fnmatch(name, pat) or (relpath and fnmatch.fnmatch(relpath, pat)):
                 return spec
         return None
+
+    def origin(self, path):
+        """What a path is a copy of, if the agent made it one; else the path."""
+        for _ in range(6):                               # a copy of a copy, but never a loop
+            if path in self.copies:
+                path = self.copies[path]; continue
+            d = next((d for d in self.copies if path.startswith(d + os.sep)), None)
+            if not d:
+                break
+            path = self.copies[d] + path[len(d):]
+        return path
 
     def resolve(self, path):
         if not path:
@@ -496,6 +516,7 @@ def file_thing(ctx, tok, role=None, prefer_dir=False):
     p = ctx.resolve(tok)
     if not p or p.count("/") == 0:
         return None
+    p = ctx.origin(p)
     base = os.path.basename(p)
     if "*" in base or "?" in base or "[" in base:
         return thing("dir", p, label=base)
@@ -776,8 +797,12 @@ DOCKER_VALUED = {"-v", "--volume", "-p", "--publish", "-e", "--env", "-w", "--wo
                  "--device", "--gpus", "--tmpfs", "--log-driver", "--log-opt", "--cap-add", "--cap-drop",
                  "--security-opt", "--ulimit", "--shm-size", "--pid", "--ipc", "--expose", "--dns", "-f",
                  "--file", "--format", "--filter", "--target", "--build-arg", "--since", "--tail", "-n"}
-QVM_VALUED = {"-u", "--user", "-p", "--pass-io", "--dispvm", "-c", "--class", "-t", "--template", "-l",
+QVM_VALUED = {"-u", "--user", "--dispvm", "-c", "--class", "-t", "--template", "-l",
               "--label", "-P", "--pool", "--property", "--prop", "-f", "--filter", "--fields", "-O"}
+
+
+GREP_VALUED = {"-A", "-B", "-C", "-m", "--max-count", "-d", "-D", "--context", "--after-context",
+               "--before-context", "-t", "-T", "--type", "-g", "--glob", "--max-depth", "-M"}
 
 
 def strip_flag_values(args, valued):
@@ -793,11 +818,73 @@ def strip_flag_values(args, valued):
     return out
 
 
+# ------------------------------------------------------------ Qubes: dom0 --
+# On Qubes every qvm-* tool is an admin-API request and every qrexec call a
+# service that policy routes: dom0 carries out both. It is drawn as what the
+# agent acts through (agent -call-> dom0 -verb-> qube), so each request lights it.
+def dom0_thing():
+    return thing("host", "dom0", label="dom0")
+
+
+ADMIN_OPS = {"start": "launch", "unpause": "launch", "create": "launch", "clone": "launch",
+             "shutdown": "stop", "kill": "stop", "pause": "stop", "suspend": "stop", "remove": "delete"}
+
+
+def qrexec_verb(service):
+    """What a qrexec service does, from its name."""
+    s = (service or "").lower()
+    if re.search(r"screen|shot|getimage|capture", s):
+        return "capture"
+    if s.startswith("admin."):
+        op = s.rsplit(".", 1)[-1]
+        return ADMIN_OPS.get(op) or ("edit" if op.startswith("set") or op in ("attach", "detach", "import", "revert")
+                                     else "probe")
+    if re.search(r"vmshell|vmexec|vmrootshell|startapp|openinvm|openurl", s):
+        return "run"
+    if re.search(r"filecopy|clipboardpaste|receive", s):
+        return "write"
+    if s.startswith("qubes.get") or re.search(r"list|check|status", s):
+        return "probe"
+    return "call"
+
+
+def qrexec_actions(ctx, base, args):
+    """`qrexec-client-vm TARGET SERVICE[+ARG]`, `qrexec-client -d TARGET ...`: a
+    request through dom0. A service that runs in dom0 acts on its +ARG qube when
+    that names one (a screenshot of it), else on dom0 itself (its desktop)."""
+    a = [x for x in args if x != "--"]
+    if base == "qrexec-client":
+        target, svc = (a[a.index("-d") + 1] if "-d" in a[:-1] else None), ""
+    else:
+        pos = [x for x in strip_flag_values(a, {"-T", "--timeout", "-t"}) if not x.startswith("-")]
+        target, svc = (pos + [None, ""])[:2]
+    if not target or "$" in target:
+        return []
+    name, _, arg = (svc or "").partition("+")
+    verb = qrexec_verb(name) if name else "run"
+    gate = dom0_thing()
+    acts = [action("agent", "call", gate, service=name or None)]
+    if target in ("dom0", "@adminvm"):
+        named = re.fullmatch(r"[A-Za-z][\w-]*", arg or "") and "$" not in arg and (
+            verb in ("capture", "launch", "stop", "delete") or (ctx.entity_for_name(arg) or {}).get("kind") == "vm")
+        if named:
+            ctx.remember("vm", arg)
+            acts.append(action(gate, verb, thing("vm", arg, label=arg), service=name))
+        elif verb != "call":
+            acts[0]["verb"] = verb                       # dom0's own: its desktop, its clock
+    elif not target.startswith("@"):
+        ctx.remember("vm", target)
+        acts.append(action(gate, verb, thing("vm", target, label=target), service=name or None))
+    return acts
+
+
 def vm_actions(ctx, base, args, flags):
     """Hypervisors, container runtimes, orchestrators: a verb on a machine."""
     acts = []
     kind = "vm"
+    via = None
     if base.startswith("qvm-") or base.startswith("qubes-"):
+        via = dom0_thing()
         op = base.split("-", 1)[1]
         rest = args
         rest = strip_flag_values(args, QVM_VALUED)
@@ -806,7 +893,8 @@ def vm_actions(ctx, base, args, flags):
         if op == "clone" and len([a for a in args if not a.startswith("-")]) >= 2:
             src, dst = [a for a in args if not a.startswith("-")][:2]
             ctx.remember("vm", src); ctx.remember("vm", dst)
-            acts.append(action("agent", "launch", thing("vm", dst)))
+            acts.append(action("agent", "call", via))
+            acts.append(action(via, "launch", thing("vm", dst)))
             acts.append(action(thing("vm", dst), "pull", thing("vm", src), clone=True))
             return acts
         if op in ("ls", "pool", "template") and not name:
@@ -876,8 +964,13 @@ def vm_actions(ctx, base, args, flags):
     else:
         return acts
     if name and not name.startswith("-"):
+        if via is not None and name == "dom0":            # `qvm-run dom0 ...`: dom0 is the target itself
+            return acts + [action("agent", verb, via)]
         ctx.remember(kind, name)
-        acts.append(action("agent", verb, thing(kind, name, label=name)))
+        if via is not None:
+            acts += [action("agent", "call", via), action(via, verb, thing(kind, name, label=name))]
+        else:
+            acts.append(action("agent", verb, thing(kind, name, label=name)))
     elif ctx.cwd:
         acts.append(action("agent", verb, thing("host", base, label=base)))
     return acts
@@ -1093,6 +1186,8 @@ def segment_actions(ctx, toks, flags):
         return acts + git_actions(ctx, args)
     if base == "gh":
         return acts + gh_actions(ctx, args)
+    if bbase in ("qrexec-client-vm", "qrexec-client"):
+        return acts + qrexec_actions(ctx, bbase, args)
     if bbase.startswith("qvm-") or bbase.startswith("qubes-") or bbase in ("docker", "podman", "nerdctl", "virsh", "vagrant", "multipass", "limactl", "colima", "minikube", "kind", "kubectl", "oc", "helm") or bbase.lower() == "vboxmanage":
         return acts + vm_actions(ctx, bbase, args, flags)
     if bbase in ("ssh", "scp", "rsync", "sftp", "ping", "ping6", "traceroute", "mtr", "dig", "nslookup", "nc", "ncat", "telnet", "nmap"):
@@ -1126,6 +1221,18 @@ def segment_actions(ctx, toks, flags):
                     args = args[:first] + args[first + 1:]          # the script is not a file
         recursive = any(a.startswith("-") and not a.startswith("--") and ("r" in a[1:] or "R" in a[1:]) for a in args)
         paths = [a for a in args if is_pathish(a, bare=recursive) and not a.startswith("-")]
+        if bbase == "cp" and len(paths) >= 2 and "$" not in "".join(paths):
+            # a copy is the same thing: later work on it is work on the original
+            srcs, dst = [ctx.resolve(x) for x in paths[:-1]], ctx.resolve(paths[-1])
+            if dst and all(srcs):
+                for src, tok in zip(srcs, paths):
+                    into = paths[-1].endswith("/") or len(srcs) > 1 or (
+                        not recursive and os.path.splitext(src)[1] and not os.path.splitext(dst)[1])
+                    ctx.copies[os.path.join(dst, os.path.basename(src)) if into else dst] = ctx.origin(src)
+                    t = file_thing(ctx, tok, prefer_dir=recursive)
+                    if t:
+                        acts.append(action("agent", "read", t))
+                return acts
         if bbase in ("cp", "mv", "ln", "install") and len(paths) >= 2:
             for p in paths[:-1]:
                 t = file_thing(ctx, p)
@@ -1145,9 +1252,10 @@ def segment_actions(ctx, toks, flags):
             a.startswith("-") and not a.startswith("--") and "r" in a[1:] for a in args) or "--recursive" in args
         paths = [a for a in args if is_pathish(a, bare=recursive) and not a.startswith("-")]
         if bbase in ("grep", "egrep", "fgrep", "rg", "ag", "ack") and paths and not any(a in ("-e", "--regexp", "-f") for a in args):
-            first = next((i for i, a in enumerate(args) if not a.startswith("-")), None)
-            if first is not None and args[first] in paths and not os.path.splitext(args[first])[1] and "/" not in args[first]:
-                paths = [p for p in paths if p != args[first]]        # the pattern, not a path
+            # the first operand is the pattern, however much it looks like a file (`grep -q 'x.sh' list`)
+            first = next((a for a in strip_flag_values(args, GREP_VALUED) if not a.startswith("-")), None)
+            if first is not None:
+                paths = [p for p in paths if p != first]
         if bbase in ("find", "fd", "fdfind"):
             paths = []
             for a in args:
@@ -1277,6 +1385,90 @@ def interp_actions(ctx, base, args, flags):
     return code_actions(ctx, code, lang)
 
 
+def expand_each(toks, flags):
+    """A loop body once per item: `for v in a b c; do qvm-check "$v"` is three checks."""
+    if not flags.get("each"):
+        return [toks]
+    var, items, raw, env = flags["each"]
+    pat = re.compile(r"\$\{(\w+)\}|\$(\w+)")
+    return [[pat.sub(lambda m: item if (m.group(1) or m.group(2)) == var
+                     else env.get(m.group(1) or m.group(2), m.group(0)), t) for t in raw]
+            for item in items[:12]]
+
+
+# ------------------------------------------------------------- VM run state --
+# What the agent saw of a machine's power state: the qvm calls it made (qrexec
+# autostarts its target, so qvm-run and friends count as a start) and the lines
+# its commands printed. Observation, not truth: a VM started behind the agent's
+# back stays at whatever it last saw.
+VM_STARTS = {"qvm-start", "qvm-unpause", "qvm-run", "qvm-copy-to-vm", "qvm-move-to-vm",
+             "qvm-open-in-vm", "qvm-open-in-dvm", "qrexec-client-vm", "qrexec-client"}
+VM_STOPS = {"qvm-shutdown", "qvm-kill", "qvm-pause"}
+VM_STATE_VALUED = {"-u", "--user", "--dispvm", "-d", "-e", "--exec", "-T", "--timeout",
+                   "--service", "--filter-escape-chars", "--localcmd", "-l"}
+_VM_UP = re.compile(r"^\s*(?:[=:]|\bis\b|state:)\s*(?:state:\s*)?(up|running)\b(?![-\w])", re.I)
+_VM_DOWN = re.compile(r"^\s*(?:[=:]|\bis\b|state:)\s*(?:state:\s*)?(halted|not running|stopped|down|paused)\b(?![-\w])", re.I)
+_VM_ROW = re.compile(r"^\s{2,}(Running|Halted|Paused|Transient)\b")            # a qvm-ls row
+_NOT_OUTPUT = re.compile(r"^\s*(?:[^\s:]*[A-Za-z_./][^\s:]*:\d+:|#|//)")                       # a grep hit or a comment: source, not state
+_VM_UP_BEFORE = re.compile(r"\b(booting|starting|started)\s+$", re.I)
+_VM_DOWN_BEFORE = re.compile(r"\b(shutting down|shut down|halting|stopping|killed)\s+$", re.I)
+_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*[A-Za-z0-9]")
+
+
+def vm_state_commands(command):
+    """[(vm, 'running'|'halted', why)] for the qvm/qrexec calls in a shell command."""
+    out = []
+    if not command:
+        return out
+    for toks, flags in split_shell(command):
+        for v in expand_each(toks, flags):
+            i = next((k for k, t in enumerate(v) if os.path.basename(t) in VM_STARTS | VM_STOPS), None)
+            if i is None:
+                continue
+            base, args = os.path.basename(v[i]), v[i + 1:]
+            if base in ("qvm-run", "qvm-start") and any(a in ("-n", "--no-autostart") for a in args):
+                continue
+            if "--all" in args or "--dispvm" in args:
+                continue
+            names = [a for a in strip_flag_values(args, VM_STATE_VALUED) if not a.startswith("-")]
+            if base == "qrexec-client":                      # qrexec-client -d VM ...
+                names = [args[args.index("-d") + 1]] if "-d" in args[:-1] else []
+            if not names or "$" in names[0]:
+                continue
+            state = "running" if base in VM_STARTS else "halted"
+            targets = names if base in ("qvm-shutdown", "qvm-kill", "qvm-start") else names[:1]
+            for n in targets:
+                if "$" not in n and "/" not in n:
+                    out.append((n, state, base))
+    return out
+
+
+def vm_state_text(text, is_vm, rules=()):
+    """[(vm, state, line)] from what a command printed: `web-vm=halted`,
+    `web-vm state: RUNNING`, `booting web-vm ...`, a qvm-ls row, plus the
+    project's own `vm_states` rules (a regex with a `vm` group, and the state it
+    means). In line order, so the last word on a VM wins."""
+    out = []
+    for line in (text or "").splitlines():
+        if _NOT_OUTPUT.match(line):
+            continue
+        for rx, state in rules:
+            for m in rx.finditer(line):
+                if is_vm(m.group("vm")):
+                    out.append((m.group("vm"), state, line.strip()[:120]))
+        for m in _NAME.finditer(line):
+            name = m.group(0)
+            if not is_vm(name):
+                continue
+            after, before = line[m.end():], line[:m.start()]
+            row = _VM_ROW.match(after)
+            if _VM_UP.match(after) or _VM_UP_BEFORE.search(before) or (row and row.group(1) in ("Running", "Transient")):
+                out.append((name, "running", line.strip()[:120]))
+            elif _VM_DOWN.match(after) or _VM_DOWN_BEFORE.search(before) or row:
+                out.append((name, "halted", line.strip()[:120]))
+    return out
+
+
 def bash_actions(command, ctx):
     """Every action a Bash tool call performed, de-duplicated, in order."""
     acts = []
@@ -1305,10 +1497,11 @@ def bash_actions(command, ctx):
                 for t in pathlike_targets(ctx, toks[1:], 2):
                     acts.append(action("agent", "write", t))
             continue
-        try:
-            acts += segment_actions(ctx, toks, flags)
-        except Exception:      # a heuristic must never take the parser down
-            continue
+        for v in expand_each(toks, flags):
+            try:
+                acts += segment_actions(ctx, v, flags)
+            except Exception:  # a heuristic must never take the parser down
+                continue
     ctx.cwd = home
     # de-duplicate (same src, verb, dst), keep order
     seen, out = set(), []

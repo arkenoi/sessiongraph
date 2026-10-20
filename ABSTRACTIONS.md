@@ -151,3 +151,46 @@ the command line, the rule only adds the call and its scores.
 
 Built in: `pre-commit … REFUSED|failed` → `pre-commit —evaluate→` the
 things committed.
+
+## Machine state
+
+A VM is coloured by its power state **as the agent saw it**: green up, grey
+down, the world hue when it was never observed. The evidence, latest wins:
+
+- the agent's own calls: `qvm-start` and anything over qrexec (`qvm-run`,
+  `qrexec-client-vm`, `qvm-copy-to-vm` …, which autostart their target) mean
+  up; `qvm-shutdown`, `qvm-kill`, `qvm-pause` mean down. Applied when the call
+  succeeds.
+- what its Bash commands printed: `build-vm=halted`, `test-vm state: RUNNING`,
+  `booting build-vm …`, a `qvm-ls` row. Grep hits (`file:12:`) and comment
+  lines are source, not state, and file reads never count.
+- a project's own markers, as `vm_states` rules (a regex with a `vm` group):
+
+```json
+{ "vm_states": [ {"pattern": "lock acquired vm=(?P<vm>[\\w-]+)", "state": "running"} ] }
+```
+
+A running VM stays on the field however long ago it was touched.
+
+## Qubes: dom0 as the gate
+
+Every `qvm-*` tool is an admin-API request and every qrexec call a service
+that policy routes, so on Qubes both are drawn through dom0:
+`agent —call→ dom0 —launch→ build-vm`. dom0 is a hub (like an instrument) and
+lights on each request. A qrexec service gets its verb from its name:
+screenshot-like (`*Screen*`, `*Shot*`, `GetImage*`) is **capture** of the qube
+in its `+ARG`, or of dom0's own desktop when it names none; `admin.vm.Start`
+is launch, `admin.vm.Kill` stop, `admin.vm.*.List` probe; `VMShell`/`VMExec`
+run. A project tool that works through dom0 says so in its vocabulary:
+`"tools/shot": {"verb": "capture", "against": "host:dom0"}`.
+
+## Campaigns
+
+When the agent launches a long suite in the background, the suite drives the
+machines and the transcript only holds the slices of its log the agent
+printed. A `campaign` section names the suite's phases in order and the machine
+each drives; from the timestamped phase lines seen so far (this run and earlier
+ones) `campaign.py` projects where the current run is on the previous run's
+pace, and so which machine is up. The HUD marks projected states dashed and
+with a `?`, says the phase in the top bar, and lets anything the agent observes
+later override it. See `examples/vm-campaign.sessiongraph.json`.

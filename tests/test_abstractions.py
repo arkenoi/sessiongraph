@@ -31,8 +31,8 @@ ok &= check("git commit is a verb on the repo",
 ok &= check("no command node for git", [a for a in acts("git status --porcelain | cut -c1-70") if a[2] == "prog"])
 ok &= check("tail of a log is a watch", acts("echo now; tail -3 /var/run/campaign/matrix.log | cut -c1-120"),
             ("agent", "watch", "file", "matrix.log"))
-ok &= check("qvm-check is a probe of a VM", acts("qvm-check --running win10-acc 2>&1"),
-            ("agent", "probe", "vm", "win10-acc"))
+ok &= check("qvm-check is a probe of a VM, through dom0", acts("qvm-check --running win10-acc 2>&1"),
+            ("agent", "call", "host", "dom0"), ("dom0", "probe", "vm", "win10-acc"))
 ok &= check("an instrument captures a VM it is told about by env",
             acts('S=/tmp/s; rm -f "$S/p.tar"; QTEST_VM=win10-acc ./tools/qtest shot "$S/p.tar" > "$S/o" 2>&1; echo rc=$?'),
             ("agent", "run", "file", "qtest"), ("qtest", "capture", "vm", "win10-acc"), ("qtest", "capture", "file", "p.tar"))
@@ -102,6 +102,57 @@ ok &= check("grep pattern word is not a path", [a for a in acts("grep -rn needle
 ok &= check("bash -lc runs the inner command", acts("bash -lc 'git status'"), ("agent", "read", "repo", "proj"))
 ok &= check("python route literals are not files", [a for a in acts("python3 - <<'PY'\ns=open('server.py').read().replace('/select','/pick')\nopen('server.py','w').write(s)\nPY") if a[3] in ("select", "pick")])
 ok &= check("here-string is not a heredoc", acts("grep -c x <<< 'x y' ; cat a.py"), ("agent", "read", "file", "a.py"))
+ok &= check("a loop body runs once per item", acts('for v in build-vm test-vm; do qvm-check --running "$v"; done'),
+            ("dom0", "probe", "vm", "build-vm"), ("dom0", "probe", "vm", "test-vm"))
+ok &= check("qvm-start is dom0 launching the qube", acts("qvm-start build-vm"),
+            ("agent", "call", "host", "dom0"), ("dom0", "launch", "vm", "build-vm"))
+ok &= check("qvm-run in dom0 is a run of dom0", acts("qvm-run --pass-io dom0 true"), ("agent", "run", "host", "dom0"))
+ok &= check("a dom0 screenshot service captures the qube it names",
+            acts('qrexec-client-vm dom0 local.Screenshot+build-vm </dev/null > "$T"'),
+            ("agent", "call", "host", "dom0"), ("dom0", "capture", "vm", "build-vm"))
+ok &= check("a whole-desktop screenshot captures dom0", acts("qrexec-client-vm dom0 local.FullScreen > d.tar"),
+            ("agent", "capture", "host", "dom0"))
+ok &= check("a qrexec service in a qube goes through dom0", acts("qrexec-client-vm test-vm qubes.VMShell"),
+            ("agent", "call", "host", "dom0"), ("dom0", "run", "vm", "test-vm"))
+ok &= check("admin API names its verb", acts("qrexec-client-vm build-vm admin.vm.Start"),
+            ("dom0", "launch", "vm", "build-vm"))
+ok &= check("qrexec autostarts its target", A.vm_state_commands("qvm-run -p build-vm 'echo hi'; qvm-shutdown --wait test-vm"),
+            ("build-vm", "running", "qvm-run"), ("test-vm", "halted", "qvm-shutdown"))
+ok &= check("--no-autostart starts nothing", [A.vm_state_commands("qvm-run --no-autostart build-vm true")], [])
+is_vm = lambda n: n in ("build-vm", "test-vm")
+ok &= check("printed VM states, last word wins",
+            A.vm_state_text("build-vm=halted test-vm=UP\n12:00:01 booting build-vm with the ISO\ntest-vm   Halted  AppVM", is_vm),
+            ("build-vm", "halted", "build-vm=halted test-vm=UP"), ("test-vm", "running", "build-vm=halted test-vm=UP"),
+            ("build-vm", "running", "12:00:01 booting build-vm with the ISO"), ("test-vm", "halted", "test-vm   Halted  AppVM"))
+ok &= check("grep hits and comments are source, not state",
+            [A.vm_state_text("tools/run.sh:12:  # build-vm up for the probe\n# test-vm is running", is_vm)], [])
+V = A.load_vocab(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "examples", "vm-campaign.sessiongraph.json"))
+ok &= check("project vm_states rules", A.vm_state_text("lock acquired vm=test-vm pid=1", is_vm, V["_vm_states"]),
+            ("test-vm", "running", "lock acquired vm=test-vm pid=1"))
+from campaign import Campaign
+C, day = Campaign(V["campaign"]), 1792454400               # 2026-10-20 00:00Z
+C.observe("suite pid=1 started 10:00:00Z\n[10:00:05] ### install (fresh)\n[10:30:00] ### upgrade\n[11:00:00] --- test: smoke-test", day + 11*3600)
+C.observe("suite pid=2 started 12:00:00Z\n[12:00:05] ### install (fresh)\n[12:20:00] upgrade: still going", day + 12.4*3600)
+P = C.project(day + 13*3600)                               # the earlier run reached smoke-test 60 min in
+ok &= check("campaign projects the next phase on the earlier run's pace", [(P["phase"], P["vm"], P["how"])], ("smoke-test", "test-vm", "projected"))
+ok &= check("campaign is over after its exit line", [C.project(day + 13*3600)["over"] if not C.observe("[12:50:00] SUITE EXIT rc=0", day + 12.9*3600) else None], True)
+K = {"vm": set(), "host": set(), "service": set()}
+acts('S=/tmp/scratch/patch; mkdir -p "$S/src"; cp vendor/lib/src/log.c "$S/src/log.c"', known=K)
+ok &= check("a copy is its original: editing the copy edits log.c of the source tree",
+            acts("sed -i 's/a/b/' /tmp/scratch/patch/src/log.c", known=K), ("agent", "edit", "file", "log.c"))
+ok &= check("... and it is one node, keyed by the original",
+            [a["dst"]["key"] for a in A.bash_actions("cat /tmp/scratch/patch/src/log.c", A.Context(cwd=CWD, known=K))],
+            CWD + "/vendor/lib/src/log.c")
+acts("cp -r vendor/lib /tmp/work", known=K)
+ok &= check("a copied tree maps every file under it",
+            [a["dst"]["key"] for a in A.bash_actions("cat /tmp/work/include/log.h", A.Context(cwd=CWD, known=K))],
+            CWD + "/vendor/lib/include/log.h")
+ok &= check("a grep pattern that looks like a file is still the pattern",
+            [a for a in acts("grep -q 'wedge-lib.sh' tools/tests/list") if a[3] == "wedge-lib.sh"])
+ok &= check("... and the file it searches is kept", acts("grep -q 'wedge-lib.sh' tools/tests/list"),
+            ("agent", "search", "file", "list"))
+ok &= check("grep -A 3 pattern file: the flag value is not the pattern", acts("grep -A 3 needle src/a.py"),
+            ("agent", "search", "file", "a.py"))
 ok &= check("outcome: the last signal wins", [A.outcome_of("3 passed, 0 failed\nlater\nrc=1")], "fail")
 ok &= check("outcome: 'ok: false' is not ok", [A.outcome_of("ok: false")], None)
 ok &= check("outcome: a mention of AssertionError mid-line is not a failure", [A.outcome_of("grep found AssertionError in 3 files")], None)
