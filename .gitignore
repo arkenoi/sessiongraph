@@ -1,0 +1,12 @@
+# never commit transcripts or exported graphs: they contain prompts,
+# file contents and command output from your sessions
+*.jsonl
+*.json
+!package.json
+graph.json
+
+__pycache__/
+*.py[cod]
+.DS_Store
+*.webm
+*.mp4
