@@ -77,7 +77,7 @@
   .sw-art{background:var(--c-artifact);transform:rotate(45deg)}
   .sw-world{background:var(--c-world);clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
   #hint{position:absolute;right:10px;bottom:7px;font-size:12px;color:var(--ink-3)}
-  #glyphs{position:absolute;left:10px;bottom:26px;width:870px;height:84px;pointer-events:none;opacity:.95}
+  #glyphs{position:absolute;left:10px;bottom:26px;pointer-events:none;opacity:.95}
   #mode{position:absolute;left:10px;bottom:7px;font-size:12px;letter-spacing:.14em;
         text-transform:uppercase;color:var(--c-agent)}
 
@@ -278,12 +278,16 @@ function startReplay(secs){
 function goLive(){ mode='live'; $('mode').textContent='live'; $('mode').style.color='var(--c-agent)'; paintChrome(); }
 function tickTime(dt){
   if (mode !== 'replay') return;
+  const lastT = times[times.length-1];
   const fTarget = flowOf(cursor) + dt*rate;
   // walk the flow axis, which skips the silences for us
   let lo = 0, hi = flows.length-1;
   while (lo < hi){ const m=(lo+hi+1)>>1; flows[m] <= fTarget ? lo = m : hi = m-1; }
-  cursor = times[lo] + (fTarget - flows[lo]);
-  if (cursor >= snap.state.t_end){ goLive(); return; }
+  cursor = Math.max(cursor, times[lo] + (fTarget - flows[lo]));   // the head never steps back
+  // over once the head has passed the last plotted point: t_end can lie beyond
+  // it (steps are capped, a corpus can end in silence), and past the end the
+  // flow axis saturates, which would otherwise rewind the head every frame
+  if (cursor > lastT || cursor >= snap.state.t_end){ goLive(); return; }
   paintChrome();
 }
 
@@ -298,7 +302,7 @@ function tickNums(){
   }
 }
 function statsAt(ref){
-  const S = (snap.state.steps||[]).filter(s => !s.ts || s.ts <= ref);
+  const S = (snap.state.steps||[]).filter(s => !s.ts || s.ts <= ref).sort((a,b) => (a.ts||0) - (b.ts||0));
   const sum = k => S.reduce((a,s)=>a+((s.t||{})[k]||0),0);
   const win = S.filter(s => (s.ts||0) >= ref-300);
   const span = Math.max(1e-9, ref - Math.min(...win.map(s=>s.ts||ref), ref));
@@ -397,12 +401,12 @@ function drawEkg(){
 // ------------------------------------------------------------- glyphs ----
 // Colour says what kind of thing; the glyph says what was done to it, and the
 // arrow on the link says which way the data went. Shared with the legend.
-const VERB_DIR = {read:-1, search:-1, watch:-1, probe:-1, fetch:-1, capture:-1, pull:-1, list:-1,
-                  extract:0, evaluate:0, run:0, call:0, edit:0, skill:0, mcp:0, execute:0,
+const VERB_DIR = {read:-1, search:-1, watch:-1, probe:-1, fetch:-1, capture:-1, pull:-1, list:-1, yield:-1,
+                  extract:0, evaluate:0, run:0, call:0, against:0, edit:0, skill:0, mcp:0, execute:0,
                   write:1, delete:1, commit:1, push:1, revert:1, build:1, install:1, launch:1, stop:1, spawn:1, note:1};
 // the key's order: what came back to the agent, what went both ways, what went out
 const VERBS = ['read','search','watch','probe','fetch','capture','pull',
-               'extract','evaluate','run','call','edit','skill','mcp',
+               'extract','evaluate','run','call','against','edit','skill','mcp',
                'write','delete','commit','push','revert','build','install','launch','stop','spawn'];
 
 function glyph(c, verb, x, y, s, col, fade){
@@ -440,6 +444,11 @@ function glyph(c, verb, x, y, s, col, fade){
     case 'call':                                                    // there and back
       P([x-s,y-s*0.45],[x+s,y-s*0.45]); c.stroke(); head(x+s, y-s*0.45, 0, s*0.55);
       P([x+s,y+s*0.45],[x-s,y+s*0.45]); c.stroke(); head(x-s, y+s*0.45, Math.PI, s*0.55); break;
+    case 'against':                                                 // a crosshair
+      c.beginPath(); c.arc(x,y,s*0.62,0,7); c.stroke();
+      P([x-s*1.05,y],[x-s*0.3,y]); c.stroke(); P([x+s*0.3,y],[x+s*1.05,y]); c.stroke();
+      P([x,y-s*1.05],[x,y-s*0.3]); c.stroke(); P([x,y+s*0.3],[x,y+s*1.05]); c.stroke();
+      c.beginPath(); c.arc(x,y,s*0.16,0,7); c.fill(); break;
     case 'revert': {                                                // counter-clockwise
       const t0 = Math.PI*0.45, t1 = -Math.PI*0.3;
       c.beginPath(); c.arc(x,y,s*0.9,t0,t1,true); c.stroke();
@@ -588,7 +597,19 @@ const MAXN = 170;                 // hard cap, in case KEEP's containers pile up
 const REST = {CONTAINS:40, USED:118, SPAWNED:110, YIELDED:70, IN_REPO:56, MENTIONS:95, TOUCH:96, AGAINST:80, REMOTE:70};
 const PARTNERED = new Set(['IN_REPO', 'REMOTE', 'AGAINST']);   // src appears, then its partner (dst)
 const hashf = s => { let h = 0; for (let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i))|0; return Math.abs(h); };
-const RAD = () => Math.min(C.w*0.5, C.h*0.5) - 30;
+let KEY_H = 84;                   // the glyph key's height in CSS px, set when it is laid out
+// The field: the centre and radii of the recency rings. An ellipse that fits
+// between the top of the panel and the glyph key, so the outer ring and the box
+// that holds bodies agree. Zoom spreads it, but never past that box.
+function field(){
+  const top = 30, bottom = C.h - KEY_H - 36;
+  const cy = (top + bottom)/2, hy = Math.max(50, (bottom - top)/2 - 6), hx = Math.max(80, C.w/2 - 44);
+  const Ry = Math.min(hy, hx), Rx = Math.min(hx, Ry*1.4);
+  return {cx: C.w/2, cy, top, bottom, Rx: Math.min(hx, Rx*ZOOM), Ry: Math.min(hy, Ry*ZOOM)};
+}
+const overlap = (a, b) => !(a[2] < b[0] || a[0] > b[2] || a[3] < b[1] || a[1] > b[3]);
+const hitsDisc = (box, d) => { const x = Math.max(box[0], Math.min(d.x, box[2])), y = Math.max(box[1], Math.min(d.y, box[3]));
+  return Math.hypot(d.x - x, d.y - y) < d.r + 1; };
 
 function synthetic(id){
   if (id === MAIN) return {id, type:'agent', label:'agent', attrs:{}, usd:0};
@@ -602,20 +623,19 @@ function synthetic(id){
 // on in place (dir 0) appears beside its source. A thing seen before comes
 // back where it was.
 function spawn(n, id, verb, near){
-  const cls = CLASS[n.type] || 'agent', cx = C.w/2, cy = C.h*0.47, h = hashf(id);
+  const cls = CLASS[n.type] || 'agent', G = field(), cx = G.cx, cy = G.cy, h = hashf(id);
   const dir = VERB_DIR[verb] ?? 0;
   const p = {id, n, cls, type:n.type, verb: verb || '', touches:0, burn:0, last:-1e9, lastOwn:-1e9, first:1e18,
              flash:1, ok:0, err:false, fade:1, grow:1, seed:h, vx:0, vy:0, deg:0, rad:9, hist:[]};
   const kept = POS.get(id);
   const a = (h % 360) * Math.PI/180;
-  if (kept && Math.hypot(kept.x-cx, kept.y-cy) < RAD()*1.05){ p.x = kept.x; p.y = kept.y; p.fade = 0.4; }
+  if (kept && Math.hypot((kept.x-cx)/G.Rx, (kept.y-cy)/G.Ry) < 1.05){ p.x = kept.x; p.y = kept.y; p.fade = 0.4; }
   else if (id === MAIN){ p.x = cx; p.y = cy; }
   else if (dir > 0){                                // made: thrown out of its maker
     const o = near || {x:cx, y:cy};
     p.x = o.x + Math.cos(a)*6; p.y = o.y + Math.sin(a)*6; p.vx = Math.cos(a)*4.5; p.vy = Math.sin(a)*4.5; p.grow = 0.08;
   } else if (dir < 0 || !near){                     // reached for: surfaces at the rim
-    const r = RAD()*0.92;
-    p.x = cx + Math.cos(a)*r; p.y = cy + Math.sin(a)*r; p.fade = 0;
+    p.x = cx + Math.cos(a)*G.Rx*0.92; p.y = cy + Math.sin(a)*G.Ry*0.92; p.fade = 0;
   } else {                                          // beside what it is attached to
     p.x = near.x + Math.cos(a)*38; p.y = near.y + Math.sin(a)*38; p.fade = 0;
   }
@@ -687,8 +707,8 @@ function feed(e){
         }
       }
     }
-    if (verb === 'yield'){                          // a search yielding a url is structure, not an act
-      ensure(d, ref, '', S); link(srcId, d, 'YIELDED', ref); continue;
+    if (verb === 'yield'){                          // a search yielding a url: structure, and the url is reached for
+      const P = ensure(d, ref, 'yield', S); touch(P, ref); link(srcId, d, 'YIELDED', ref); remember(S, P, 'yield'); continue;
     }
     const P = ensure(d, ref, verb, S);
     touch(P, ref, verb, e, {fail, share});
@@ -707,6 +727,7 @@ function linkStructure(ref){
     if (type === 'CONTAINS' || type === 'YIELDED' || PARTNERED.has(type)){
       const child = PARTNERED.has(type) ? src : dst, parent = PARTNERED.has(type) ? dst : src;
       if (!ENT.has(child)) continue;                // a container (or partner) appears with its first child
+      if (type === 'AGAINST' && (EDGES.get(src+'>'+dst+'>TOUCH')||{}).verb === 'against') continue;   // drawn as the act itself
       ensure(parent, ref, '', ENT.get(child));
       if (!EDGES.has(src+'>'+dst+'>'+type)) link(src, dst, type, ed.t0 ?? ref);
     } else if (type === 'SPAWNED' || type === 'MENTIONS'){
@@ -731,8 +752,7 @@ function expire(){
   const things = [...ENT.values()].filter(p => p.id !== MAIN && p.id !== SUB);
   // ranked by their own last touch: containers and partners that were only ever
   // implied by structure are kept through what they hold, not on their own
-  const ranked = things.filter(p => p.type !== 'agent' && p.lastOwn > -1e8)
-                       .sort((a,b) => b.lastOwn - a.lastOwn);
+  const ranked = things.filter(p => p.lastOwn > -1e8).sort((a,b) => b.lastOwn - a.lastOwn);
   const keep = new Set(ranked.slice(0, KEEP).map(p => p.id));
   for (let pass = 0; pass < 3; pass++)              // containers, instruments and hubs of kept things; their partners
     for (const e of EDGES.values()){
@@ -751,7 +771,9 @@ function pump(ref){
   if (lastRefSeen != null && ref < lastRefSeen - 1){
     for (const p of ENT.values()) POS.set(p.id, {x:p.x, y:p.y});
     ENT.clear(); EDGES.clear(); ptr = 0;
-    while (ptr < EV.length && EV[ptr].ts < ref - 600) ptr++;
+    let end = 0; while (end < EV.length && EV[end].ts <= ref) end++;
+    // rebuild from the ten minutes before the head, but never from fewer than 200 calls
+    while (ptr < EV.length && EV[ptr].ts < ref - 600 && end - ptr > 200) ptr++;
   }
   lastRefSeen = ref;
   let fed = 0;
@@ -774,7 +796,7 @@ function prune(){
 }
 
 function physics(ref){
-  const arr = [...ENT.values()], cx = C.w/2, cy = C.h*0.47, R = RAD()*ZOOM;
+  const arr = [...ENT.values()], G = field(), cx = G.cx, cy = G.cy, ax = G.Rx/G.Ry;
   const ranked = arr.slice().sort((x,y) => y.last - x.last);
   const span = Math.max(1, ranked.length-1);
   ranked.forEach((p,i) => p.prox = 1 - i/span);
@@ -802,11 +824,11 @@ function physics(ref){
     const f = (d-rest)*k;
     a.vx += dx/d*f; a.vy += dy/d*f; b.vx -= dx/d*f; b.vy -= dy/d*f;
   }
-  for (const p of arr){                              // recency pulls inward, gently
-    const tr = p.expiring ? R*1.18 : R*(0.18 + 0.78*(1-p.prox));
-    const dx = p.x-cx, dy = p.y-cy, d = Math.hypot(dx,dy) || 1;
-    const f = (tr - d) * (p.expiring ? 0.012 : 0.006);
-    p.vx += dx/d*f; p.vy += dy/d*f;
+  for (const p of arr){                              // recency pulls toward a ring of the ellipse, gently
+    const tr = p.expiring ? G.Ry*1.18 : G.Ry*(0.18 + 0.78*(1-p.prox));
+    const ex = (p.x-cx)/ax, ey = p.y-cy, dn = Math.hypot(ex,ey) || 1;
+    const f = (tr - dn) * (p.expiring ? 0.012 : 0.006);
+    p.vx += ex/dn*f*ax; p.vy += ey/dn*f;
     p.grow += (1-p.grow)*0.075;
     if (p.expiring) p.fade = Math.max(0, p.fade - 0.018);     // the expanding universe
     else p.fade += (1-p.fade)*0.06;
@@ -816,7 +838,7 @@ function physics(ref){
     if (p.id === MAIN){ p.x = cx; p.y = cy; p.vx = p.vy = 0; continue; }
     p.vx *= 0.82; p.vy *= 0.82;
     p.x += Math.max(-12, Math.min(12, p.vx)); p.y += Math.max(-12, Math.min(12, p.vy));
-    if (!p.expiring){ p.x = Math.max(40, Math.min(C.w-40, p.x)); p.y = Math.max(34, Math.min(C.h-150, p.y)); }
+    if (!p.expiring){ p.x = Math.max(40, Math.min(C.w-40, p.x)); p.y = Math.max(G.top, Math.min(G.bottom, p.y)); }
   }
 }
 // the glow fades even when the layout is frozen: a white hit for ~150 ms, then
@@ -831,50 +853,66 @@ const cv = $('cv'), ctx = cv.getContext('2d');
 function fit(c){ const d=Math.min(2,devicePixelRatio||1), r=c.getBoundingClientRect();
   c.width=Math.max(1,r.width*d); c.height=Math.max(1,r.height*d); return {w:r.width,h:r.height,d}; }
 let C = fit(cv);
-addEventListener('resize', () => { C = fit(cv); drawMap(); });
+addEventListener('resize', () => { C = fit(cv); keyW = 0; drawMap(); });
 
 const gk = $('glyphs'), gx = gk.getContext('2d');
-let keyDrawn = false;
+let keyW = 0;
 function drawGlyphKey(){
-  if (keyDrawn) return; keyDrawn = true;
-  gx.setTransform(2,0,0,2,0,0); gx.clearRect(0,0,gk.width,gk.height);
-  gx.font = '12px ui-monospace,monospace'; gx.textAlign = 'left'; gx.textBaseline = 'middle';
-  // one row per direction: what came back, what went both ways, what went out
-  const rows = [['← in', -1], ['↔ both', 0], ['→ out', 1]], cw = 80, rh = 20, x0 = 66;
-  rows.forEach(([lab, dir], row) => {
-    const y = 12 + row*rh;
-    gx.fillStyle = CHROME; gx.fillText(lab, 10, y+0.5);
-    VERBS.filter(v => (VERB_DIR[v] ?? 0) === dir).forEach((v, col) => {
-      const x = x0 + col*cw;
-      glyph(gx, v, x, y, 5.4, '#b2c2d6', 1); gx.fillStyle = '#b2c2d6'; gx.fillText(v, x+11, y+0.5);
-    });
-  });
-  const ky = 12 + 3*rh + 2;
+  const Wk = Math.max(320, Math.round(C.w) - 20);
+  if (keyW === Wk) return; keyW = Wk;
+  const rh = 20, x0 = 66, pad = 14, font = '12px ui-monospace,monospace';
+  gx.setTransform(1,0,0,1,0,0); gx.font = font;
+  const mw = t => gx.measureText(t).width;
+  // lay the rows out first; a row that does not fit wraps into a continuation line
+  const lines = [];
+  const flow = (label, start, items, widthOf) => {
+    let line = {label, items: []}, x = start; lines.push(line);
+    for (const it of items){ const w = widthOf(it);
+      if (x + w > Wk - 4 && line.items.length){ line = {label:'', items: []}; lines.push(line); x = x0; }
+      it.x = x; line.items.push(it); x += w; }
+  };
+  for (const [lab, dir] of [['← in', -1], ['↔ both', 0], ['→ out', 1]])      // what came back, both ways, what went out
+    flow(lab, x0, VERBS.filter(v => (VERB_DIR[v] ?? 0) === dir).map(v => ({v})), it => 11 + mw(it.v) + pad);
   const KIND = [['#c98500','artifacts'],['#3987e5','agent · instruments'],['#d55181','world']];
-  let kx = 10;
-  KIND.forEach(([c,label]) => {
-    gx.fillStyle = c; gx.beginPath(); gx.arc(kx+4, ky, 4.5, 0, 7); gx.fill();
-    gx.fillStyle = '#b2c2d6'; gx.fillText(label, kx+13, ky+0.5);
-    kx += 13 + gx.measureText(label).width + 16;
+  flow('', 10, [...KIND.map(([c,t]) => ({swatch:c, t})), {text:'agent → instrument → thing · folder ⊃ file · size = burn · ×n = returns'}],
+       it => it.swatch ? 13 + mw(it.t) + 16 : mw(it.text) + pad);
+  const H = lines.length*rh + 6;
+  gk.style.width = Wk + 'px'; gk.style.height = H + 'px'; gk.width = Wk*2; gk.height = H*2; KEY_H = H;
+  gx.setTransform(2,0,0,2,0,0); gx.clearRect(0,0,Wk,H);
+  gx.font = font; gx.textAlign = 'left'; gx.textBaseline = 'middle';
+  lines.forEach((ln, i) => {
+    const y = 12 + i*rh;
+    if (ln.label){ gx.fillStyle = CHROME; gx.fillText(ln.label, 10, y+0.5); }
+    for (const it of ln.items){
+      if (it.v){ glyph(gx, it.v, it.x, y, 5.4, '#b2c2d6', 1); gx.fillStyle = '#b2c2d6'; gx.fillText(it.v, it.x+11, y+0.5); }
+      else if (it.swatch){ gx.fillStyle = it.swatch; gx.beginPath(); gx.arc(it.x+4, y, 4.5, 0, 7); gx.fill();
+                           gx.fillStyle = '#b2c2d6'; gx.fillText(it.t, it.x+13, y+0.5); }
+      else { gx.fillStyle = CHROME; gx.fillText(it.text, it.x, y+0.5); }
+    }
   });
-  gx.fillStyle = CHROME;
-  gx.fillText('agent → instrument → thing · folder ⊃ file · size = burn · ×n = returns', kx + 4, ky + 0.5);
 }
 
-function arrow(c, x1, y1, x2, y2, t, col, a, size){
-  const x = x1 + (x2-x1)*t, y = y1 + (y2-y1)*t, ang = Math.atan2(y2-y1, x2-x1);
+function bowOf(e, a, b){                           // the control point of a bowed edge
+  const nx = -(b.y-a.y), ny = (b.x-a.x), L = Math.hypot(nx,ny)||1;
+  const bow = ((hashf(e.src+e.dst) % 2) ? 1 : -1) * Math.min(26, L*0.12);
+  return {x: (a.x+b.x)/2 + nx/L*bow, y: (a.y+b.y)/2 + ny/L*bow};
+}
+function edgePath(c, e, a, b){
+  c.beginPath(); c.moveTo(a.x, a.y);
+  if (e.type === 'TOUCH' || e.type === 'USED'){ const q = bowOf(e, a, b); c.quadraticCurveTo(q.x, q.y, b.x, b.y); }
+  else c.lineTo(b.x, b.y);
+}
+// a point on the edge, t of the way from a to b, and the direction of travel there
+function along(e, a, b, t){
+  if (e.type !== 'TOUCH' && e.type !== 'USED') return {x: a.x + (b.x-a.x)*t, y: a.y + (b.y-a.y)*t, ang: Math.atan2(b.y-a.y, b.x-a.x)};
+  const q = bowOf(e, a, b), u = 1-t;
+  return {x: u*u*a.x + 2*u*t*q.x + t*t*b.x, y: u*u*a.y + 2*u*t*q.y + t*t*b.y,
+          ang: Math.atan2(2*u*(q.y-a.y) + 2*t*(b.y-q.y), 2*u*(q.x-a.x) + 2*t*(b.x-q.x))};
+}
+function head(c, x, y, ang, col, a, size){
   c.save(); c.translate(x, y); c.rotate(ang);
   c.fillStyle = hexA(col, a); c.beginPath(); c.moveTo(size, 0); c.lineTo(-size*0.8, size*0.6); c.lineTo(-size*0.8, -size*0.6); c.closePath(); c.fill();
   c.restore();
-}
-
-function edgePath(c, e, a, b){
-  c.beginPath(); c.moveTo(a.x, a.y);
-  if (e.type === 'TOUCH' || e.type === 'USED'){
-    const mx = (a.x+b.x)/2, my = (a.y+b.y)/2, nx = -(b.y-a.y), ny = (b.x-a.x), L = Math.hypot(nx,ny)||1;
-    const bow = ((hashf(e.src+e.dst) % 2) ? 1 : -1) * Math.min(26, L*0.12);
-    c.quadraticCurveTo(mx + nx/L*bow, my + ny/L*bow, b.x, b.y);
-  } else c.lineTo(b.x, b.y);
 }
 function rrect(c, x, y, w, h, r){
   c.beginPath(); c.moveTo(x+r, y); c.lineTo(x+w-r, y); c.quadraticCurveTo(x+w, y, x+w, y+r);
@@ -885,32 +923,37 @@ function rrect(c, x, y, w, h, r){
 function drawStream(now){
   const {w,h,d} = C; ctx.setTransform(d,0,0,d,0,0); ctx.clearRect(0,0,w,h);
   if (!snap) return;
-  const ref = refTime(), cx = w/2, cy = h*0.47;
+  const ref = refTime();
   pump(ref);
   if (!frozen) physics(ref);
   glowTick(); drawGlyphKey();
   for (const p of ENT.values()) POS.set(p.id, {x:p.x, y:p.y});
+  const G = field(), cx = G.cx, cy = G.cy, Rx = G.Rx, Ry = G.Ry;
 
   // faint recency rings so the radial meaning is readable: chrome, dimmer than any datum
-  const R = RAD()*ZOOM;
   ctx.font = '12px ui-monospace,monospace'; ctx.textAlign = 'right';
   for (const [f,label] of [[0.18,'at work'],[0.57,'earlier'],[0.96,'forgetting']]){
     ctx.strokeStyle = hexA(CHROME, 0.09); ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.arc(cx, cy, R*f, 0, 7); ctx.stroke();
-    ctx.fillStyle = hexA(CHROME, 0.85); ctx.fillText(label, cx - R*f*0.93, cy + R*f*0.38);
+    ctx.beginPath(); ctx.ellipse(cx, cy, Rx*f, Ry*f, 0, 0, 7); ctx.stroke();
+    const tw = ctx.measureText(label).width;                         // the label stays on the canvas at any zoom
+    const lx = Math.max(tw + 8, Math.min(w - 8, cx - Rx*f*0.93)), ly = Math.max(16, Math.min(G.bottom + 12, cy + Ry*f*0.38));
+    ctx.fillStyle = hexA(CHROME, 0.85); ctx.fillText(label, lx, ly);
   }
 
   // edges: additive, in three passes -- a wide dim wash in the hue, a thin
-  // brighter line, and a near-white core only while the edge is fresh
+  // brighter line, and a near-white core only while the edge is fresh. The
+  // arrowhead says which way the data went; the verb rides the edge as a glyph
+  // arriving at its target, so the body itself can say what kind of thing it is.
   const running = new Set();
   if (mode === 'live') for (const i of (snap.state.inflight||[])) for (const id of (i.nodes||[])) running.add(id);
+  const glyphs = [];
   ctx.globalCompositeOperation = 'lighter';
   for (const e of EDGES.values()){
     const a = ENT.get(e.src), b = ENT.get(e.dst); if (!a || !b) continue;
     const hot = Math.max(a.prox||0, b.prox||0), fresh = e.flash || 0;
     const L = Math.hypot(b.x-a.x, b.y-a.y);
     const far = L < 60 ? 1 : L > 220 ? 0.3 : 1 - 0.7*(L-60)/160;        // long edges fade
-    const fade = Math.min(a.fade, b.fade) * far;
+    const fab = Math.min(a.fade, b.fade), fade = fab * far;
     let col, alpha, width;
     if (e.type === 'CONTAINS' || e.type === 'IN_REPO'){ col = COLOR[b.cls === 'agent' ? a.cls : b.cls]; alpha = 0.2 + 0.28*hot; width = 1; }
     else if (e.type === 'USED'){ col = COLOR.agent; alpha = 0.14 + 0.42*hot + 0.4*fresh; width = 1 + 0.8*Math.log2(1+e.w); }
@@ -921,23 +964,29 @@ function drawStream(now){
     if (fresh > 0.02){ ctx.lineWidth = 1; ctx.strokeStyle = hexA(CORE, 0.55*fresh*fade); edgePath(ctx, e, a, b); ctx.stroke(); }
     if (e.type === 'TOUCH'){
       const dir = VERB_DIR[e.verb] ?? 0;
-      if (dir > 0) arrow(ctx, a.x, a.y, b.x, b.y, 0.72, col, (0.35 + 0.6*fresh)*fade, 5);
-      else if (dir < 0) arrow(ctx, b.x, b.y, a.x, a.y, 0.72, col, (0.35 + 0.6*fresh)*fade, 5);
+      if (dir > 0){ const q = along(e, a, b, 0.56); head(ctx, q.x, q.y, q.ang, col, (0.35 + 0.6*fresh)*fade, 5); }
+      else if (dir < 0){ const q = along(e, a, b, 0.3); head(ctx, q.x, q.y, q.ang + Math.PI, col, (0.35 + 0.6*fresh)*fade, 5); }
+      if (e.verb && L > 34){                                            // the verb, just short of its target
+        const q = along(e, a, b, Math.max(0.5, Math.min(0.9, 1 - ((b.rad||9) + 12)/L)));
+        glyphs.push({v: e.verb, x: q.x, y: q.y, col, a: (0.55 + 0.45*fresh)*fab});
+      }
     } else if (e.type === 'SPAWNED' || e.type === 'YIELDED' || PARTNERED.has(e.type)){
-      arrow(ctx, a.x, a.y, b.x, b.y, 0.7, col, 0.35*fade, 4);
+      const q = along(e, a, b, 0.7); head(ctx, q.x, q.y, q.ang, col, 0.35*fade, 4);
     }
     if (fresh > 0.02 && !reduce && e.type !== 'CONTAINS'){   // a packet along a fresh edge
-      const t = 1 - fresh, px2 = a.x + (b.x-a.x)*t, py2 = a.y + (b.y-a.y)*t;
-      ctx.fillStyle = hexA(CORE, fresh*0.9); ctx.beginPath(); ctx.arc(px2, py2, 2.4 + fresh*2.4, 0, 7); ctx.fill();
+      const q = along(e, a, b, 1 - fresh);
+      ctx.fillStyle = hexA(CORE, fresh*0.9); ctx.beginPath(); ctx.arc(q.x, q.y, 2.4 + fresh*2.4, 0, 7); ctx.fill();
     }
   }
   ctx.globalCompositeOperation = 'source-over';
+  for (const g of glyphs) glyph(ctx, g.v, g.x, g.y, 5, g.col, g.a);
 
   // nodes
   const ents = [...ENT.values()].sort((x,y) => (x.prox||0) - (y.prox||0));
   const maxBurn = Math.max(1e-4, ...ents.filter(p => !isHubLike(p)).map(p => p.burn||0));
   const maxUse = Math.max(1, ...ents.filter(p => isHubLike(p)).map(p => p.touches||0));
-  const boxes = [];
+  const boxes = [];                                 // text plates placed so far (labels and ×n counts)
+  const discs = ents.filter(p => !(p.expiring && p.fade < 0.12)).map(p => ({id:p.id, x:p.x, y:p.y, r:p.rad||9}));
   for (const p of ents){
     const hot = p.prox != null ? p.prox : 1, col = COLOR[p.cls];
     const inst = isInstrument(p), isHub = p.type === 'agent' || inst;
@@ -951,7 +1000,7 @@ function drawStream(now){
     const dying = !!p.expiring, f = p.fade;
     const showLabel = !(dying && f < 0.7), showFill = !(dying && f < 0.5), ghost = dying && f < 0.3, dot = dying && f < 0.12;
     let alpha = (0.5 + 0.5*hot) * f;
-    if (!reduce && !isHub && p.touches === 0 && Math.hypot(p.x-cx, p.y-cy) > R*0.6)       // never fresh: a twinkle at the rim
+    if (!reduce && !isHub && p.touches === 0 && Math.hypot((p.x-cx)/Rx, (p.y-cy)/Ry) > 0.6)   // never fresh: a twinkle at the rim
       alpha += 0.12 * Math.sin(now/210 + p.seed) * Math.sin(now/347 + p.seed*0.7);
     ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
     if (dot){
@@ -983,14 +1032,11 @@ function drawStream(now){
       ctx.shadowBlur = 0; ctx.strokeStyle = hexA(sc, 0.75); ctx.lineWidth = 1.6;
       ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.stroke();
       if (showFill) kindIcon(ctx, p.type, p.x, p.y, Math.min(6, r*0.6), iconCol, 0.9);
-    } else {
+    } else {                                          // things: the icon says what kind of thing; the verb is on the edge
       if (showFill){ ctx.fillStyle = hexA(col, 0.20 + 0.25*hot); ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.fill(); }
       ctx.shadowBlur = 0; ctx.strokeStyle = hexA(sc, 0.85); ctx.lineWidth = 1.8;
       ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.stroke();
-      if (showFill){
-        if (p.verb) glyph(ctx, p.verb, p.x, p.y, Math.min(5.6, r*0.6)*Math.min(1, p.grow*1.6), iconCol, 1);
-        else kindIcon(ctx, iconFor(p), p.x, p.y, Math.min(5.5, r*0.6), iconCol, 0.9);
-      }
+      if (showFill) kindIcon(ctx, iconFor(p), p.x, p.y, Math.min(5.6, r*0.6)*Math.min(1, p.grow*1.6), iconCol, 0.95);
     }
     ctx.setLineDash([]);
     if (p.err){ ctx.strokeStyle = '#e66767'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x, p.y, r + 4, 0, 7); ctx.stroke(); }
@@ -998,38 +1044,41 @@ function drawStream(now){
       ctx.strokeStyle = hexA(col, 0.85*p.ok); ctx.lineWidth = 1;
       ctx.beginPath(); ctx.arc(p.x, p.y, r + 7 + (1-p.ok)*7, 0, 7); ctx.stroke();
     }
-    if (p.touches > 1 && !isHub && showLabel){
-      ctx.fillStyle = hexA(col, .95); ctx.font = 'bold 12px ui-monospace,monospace'; ctx.textAlign = 'center';
-      ctx.fillText('×'+p.touches, p.x, p.y + r + 14);
+    if (p.touches > 1 && !isHub && showLabel){        // ×n: a plate like any other, so it never sits on a name
+      ctx.font = 'bold 12px ui-monospace,monospace'; ctx.textAlign = 'center';
+      const nt = '×'+p.touches, nw = ctx.measureText(nt).width, nb = [p.x-nw/2-2, p.y+r+3, p.x+nw/2+2, p.y+r+17];
+      if (!boxes.some(b2 => overlap(nb, b2))){ boxes.push(nb); ctx.fillStyle = hexA(col, .95); ctx.fillText(nt, p.x, p.y + r + 14); }
     }
     ctx.restore();
     if (!showLabel) continue;
 
     const txt = p.id === MAIN ? 'agent' : String(p.n.label).slice(0,28) + (inst ? ' ×'+p.touches : '');
     ctx.font = (isHub ? 'bold ' : '') + '13px ui-monospace,monospace';
-    const right = p.x >= cx; ctx.textAlign = right ? 'left' : 'right';
-    const tw = ctx.measureText(txt).width, lx = right ? p.x + r + 9 : p.x - r - 9, ly = p.y + 4;
-    const box = right ? [lx-2, ly-13, lx+tw+2, ly+5] : [lx-tw-2, ly-13, lx+2, ly+5];
-    const clash = boxes.some(b2 => !(box[2]<b2[0]||box[0]>b2[2]||box[3]<b2[1]||box[1]>b2[3]));
-    if (!clash && (hot > 0.25 || isHub || r > 9 || p.deg > 2)){
-      boxes.push(box);
-      ctx.fillStyle = 'rgba(8,13,24,.8)'; ctx.fillRect(box[0], box[1], box[2]-box[0], box[3]-box[1]);
+    const tw = ctx.measureText(txt).width, ly = p.y + 4;
+    const place = right => { const lx = right ? p.x + r + 9 : p.x - r - 9;
+      return {right, lx, box: right ? [lx-2, ly-13, lx+tw+2, ly+5] : [lx-tw-2, ly-13, lx+2, ly+5]}; };
+    // a plate may not cover another plate or another body; try the far side before giving up
+    const bad = L => boxes.some(b2 => overlap(L.box, b2)) || discs.some(d2 => d2.id !== p.id && hitsDisc(L.box, d2));
+    let lab = place(p.x >= cx); if (bad(lab)) lab = place(!lab.right);
+    if (!bad(lab) && (hot > 0.25 || isHub || r > 9 || p.deg > 2)){
+      boxes.push(lab.box); ctx.textAlign = lab.right ? 'left' : 'right';
+      ctx.fillStyle = 'rgba(8,13,24,.8)'; ctx.fillRect(lab.box[0], lab.box[1], lab.box[2]-lab.box[0], lab.box[3]-lab.box[1]);
       ctx.fillStyle = hexA(hot > .3 || isHub ? '#f2f6fb' : '#b2c2d6', p.fade);
-      ctx.fillText(txt, lx, ly);
+      ctx.fillText(txt, lab.lx, ly);
     }
   }
 }
 
 // ---------------------------------------------------------------- input ----
 let drag = null;
-cv.addEventListener('mousedown', ev => {
-  drag = {x:ev.clientX, t:refTime()};
-  if (mode === 'live'){ mode = 'scrub'; cursor = refTime(); }
-  $('mode').textContent = 'scrub'; $('mode').style.color = 'var(--c-artifact)';
-});
+cv.addEventListener('mousedown', ev => { drag = {x:ev.clientX, t:refTime(), on:false}; });
 addEventListener('mouseup', () => drag = null);
 addEventListener('mousemove', ev => {
   if (!drag) return;
+  if (!drag.on){                                   // a bare click leaves the mode alone; a drag of 4px scrubs
+    if (Math.abs(ev.clientX - drag.x) < 4) return;
+    drag.on = true; $('mode').textContent = 'scrub'; $('mode').style.color = 'var(--c-artifact)';
+  }
   mode = 'scrub';
   const f = flowOf(drag.t) - (ev.clientX - drag.x)/6;
   let lo=0, hi=flows.length-1;
@@ -1091,7 +1140,7 @@ function drawMap(){
   const M = fit(mcv), {w,h,d} = M;
   mx2.setTransform(d,0,0,d,0,0); mx2.clearRect(0,0,w,h);
   if (!snap) return;
-  const S = (snap.state.steps||[]).filter(s=>s.ts);
+  const S = (snap.state.steps||[]).filter(s=>s.ts).sort((a,b) => a.ts - b.ts);   // paged corpora arrive newest page first
   if (!S.length) return;
   const ref = refTime(), max = Math.max(...S.map(s=>s.usd), 1e-6);
   const pad = {l:50,r:10,t:10,b:16}, iw = w-pad.l-pad.r, ih = h-pad.t-pad.b;
@@ -1103,7 +1152,7 @@ function drawMap(){
   const bw = Math.max(1.5, iw/S.length - 1.5);
   S.forEach((s,i) => {
     const x = pad.l + (iw/S.length)*i, bh = Math.max(1.5,(s.usd/max)*ih);
-    mx2.fillStyle = (s.ts<=ref) ? 'rgba(90,160,240,.9)' : 'rgba(57,135,229,.22)';
+    mx2.fillStyle = hexA(COLOR.agent, s.ts<=ref ? 0.95 : 0.25);
     mx2.fillRect(x, pad.t+ih-bh, bw, bh);
   });
   const fx = f => { const t0=flows[0], t1=flows[flows.length-1];
