@@ -153,6 +153,12 @@ ok &= check("... and the file it searches is kept", acts("grep -q 'wedge-lib.sh'
             ("agent", "search", "file", "list"))
 ok &= check("grep -A 3 pattern file: the flag value is not the pattern", acts("grep -A 3 needle src/a.py"),
             ("agent", "search", "file", "a.py"))
+C2 = Campaign(V["campaign"])
+C2.observe("suite pid=3 started 14:00:00Z\n[14:00:05] ### install\n[14:20:00] --- test: smoke-test", day + 14.4*3600)
+C2.observe("15:30:00 probe[test-vm]: round 2 still going", day + 15.5*3600)
+P2 = C2.project(day + 16.2*3600)                           # 2h after smoke-test began, 42 min after test-vm last spoke
+ok &= check("a phase whose machine still shows up in the log is not over", [(P2["over"], P2["vm"])], (False, "test-vm"))
+ok &= check("a quiet campaign is over, and says when", [C2.project(day + 17*3600)["over"]], True)
 ok &= check("outcome: the last signal wins", [A.outcome_of("3 passed, 0 failed\nlater\nrc=1")], "fail")
 ok &= check("outcome: 'ok: false' is not ok", [A.outcome_of("ok: false")], None)
 ok &= check("outcome: a mention of AssertionError mid-line is not a failure", [A.outcome_of("grep found AssertionError in 3 files")], None)

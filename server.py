@@ -449,17 +449,21 @@ class Tailer:
                       "awaiting you" if idle is not None and idle < 900 else "idle")
             vms = dict(self.vmstate)
             camp = self.campaign.project(now) if self.campaign.enabled else None
-            if camp and not camp["over"]:               # what the campaign is driving, unless seen since
+            if camp and (not camp["over"] or camp.get("since")):
+                # what the campaign is driving, unless seen since; one machine at a time means the rest are
+                # down, and a campaign that has ended leaves none of its machines up on its account
                 for name in camp["vms"]:
-                    up = name == camp["vm"]
+                    up = not camp["over"] and name == camp["vm"]
                     if not up and not camp["serial"]:
                         continue
                     seen = vms.get(name)
                     if seen and seen["ts"] > camp["since"]:
                         continue
+                    hm = f"{datetime.fromtimestamp(camp['since'], timezone.utc):%H:%M}"
+                    why = (f"campaign over ~{hm} · {camp['basis']}" if camp["over"] else
+                           f"campaign {camp['how']}: {camp['phase']} since ~{hm} · {camp['basis']}")
                     vms[name] = {"state": "running" if up else "halted", "ts": camp["since"], "projected": True,
-                                 "why": f"campaign {camp['how']}: {camp['phase']} since ~"
-                                        f"{datetime.fromtimestamp(camp['since'], timezone.utc):%H:%M} · {camp['basis']}"}
+                                 "why": why}
             for n in d["nodes"]:
                 name = n["id"].split(":", 1)[-1]
                 if n["type"] == "vm" and name in vms:

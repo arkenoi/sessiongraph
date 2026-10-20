@@ -37,6 +37,9 @@ class Campaign:
         self.start_rx = re.compile(self.cfg["start"]) if self.cfg.get("start") else None
         self.end_rx = re.compile(self.cfg["end"]) if self.cfg.get("end") else None
         self.marks = set()        # (abs ts, phase index)
+        self.busy = {}            # machine -> last abs ts a log line named it: its phase still at work
+        self.vm_rx = re.compile(r"(?<![\w-])(%s)(?![\w-])" % "|".join(
+            re.escape(v) for v in sorted(set(self.vm.values()), key=len, reverse=True))) if self.vm else None
         self.starts = set()       # abs ts of campaign launches
         self.ends = set()         # abs ts of campaign exits
 
@@ -68,6 +71,8 @@ class Campaign:
             m = self.phase_rx.search(line[tm.end():])
             if m:
                 self.marks.add((t, self.idx[m.group(1).lower()]))
+            for v in (self.vm_rx.findall(line[tm.end():]) if self.vm_rx else ()):
+                self.busy[v] = max(self.busy.get(v, 0), t)
 
     def _runs(self):
         """Marks split into runs: at a launch, or when the first phase begins again."""
@@ -92,10 +97,12 @@ class Campaign:
         S = min(t for t, _ in run)
         launch = max([s for s in self.starts if s <= S + 600], default=None)
         S0 = launch if launch and launch <= S else S
-        if any(e >= S0 for e in self.ends):
-            return {"over": True, "basis": "the campaign log printed its exit"}
         L = max(i for _, i in run)                        # furthest phase seen, and the latest line
         tL = max(t for t, _ in run)
+        ends = [e for e in self.ends if e >= S0]
+        if ends:
+            return {"over": True, "since": min(ends), "basis": "the campaign log printed its exit",
+                    "serial": bool(self.cfg.get("serial")), "vms": sorted(set(self.vm.values()))}
         # the pace: the most recent earlier run that got further than this one
         ref = next((r for r in reversed(runs[:-1]) if max(i for _, i in r) > L), None)
         expected = {}
@@ -113,14 +120,17 @@ class Campaign:
                 phase, since, how = i, expected[i], "projected"
         last = len(self.order) - 1
         limit = (self.cfg.get("last_phase_minutes") or 60) * 60
-        if phase == last and now - since > limit:
-            return {"over": True, "basis": f"{self.order[last]} began ~{_hm(since)}, longer ago than any run takes"}
+        name = self.order[phase]
+        alive = max(since, tL, self.busy.get(self.vm.get(name), 0))    # the latest sign this phase was at work
+        if phase == last and now - alive > limit:
+            return {"over": True, "since": alive + limit, "serial": bool(self.cfg.get("serial")),
+                    "vms": sorted(set(self.vm.values())),
+                    "basis": f"nothing from {name} since ~{_hm(alive)}, longer than it ever runs"}
         if how == "seen" and ref is None and now - tL > limit * 2:
             return None                                   # nothing to pace it by, and long quiet
-        name = self.order[phase]
-        basis = (f"last log line seen {_hm(tL)} ({self.order[L]})"
+        basis = (f"last log line seen {_hm(max(tL, alive))} ({self.order[L]})"
                  + (f"; paced on the run of {_hm(min(t for t, _ in ref))}" if ref else ""))
-        return {"over": False, "phase": name, "vm": self.vm.get(name), "since": since,
+        return {"over": False, "phase": name, "vm": self.vm.get(name), "since": since, "alive": alive,
                 "how": how, "basis": basis, "serial": bool(self.cfg.get("serial")),
                 "vms": sorted(set(self.vm.values()))}
 
