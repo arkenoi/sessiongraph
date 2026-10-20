@@ -242,6 +242,9 @@ toward a head at *now*. Everything the agent touches is a body in that field:
   write, a commit, a push, a spawn — is thrown out of the stream and swells as it
   flies. Something that already existed and is only now *reached for* — a read, a
   search, a fetch — surfaces out of the dark where it always was.
+- **A body with a call running on it pulses**, with a halo expanding off it;
+  everything else recently touched breathes faintly, so the field is never dead
+  still while work is happening.
 - Colour is the kind of thing, the glyph is the verb, the arrow on the link is
   which way the data went, and a red ring means the call failed.
 

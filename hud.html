@@ -653,15 +653,28 @@ function drawStream(now){
 
   const boxes = [];
   const maxBurn = Math.max(1e-4, ...ents.map(p => p.burn || 0));
+  const running = new Set();
+  if (mode === 'live' && snap)
+    for (const i of (snap.state.inflight || [])) for (const id of (i.nodes || [])) running.add(id);
   for (const p of ents){
     const age = ref - p.last, hot = Math.exp(-Math.max(0,age)/HOT);
     const col = COLOR[p.cls];
     // a body grows with what it has cost: burn is the weight, touches the count
     const r = 7 + 23*Math.sqrt((p.burn || 0)/maxBurn);
     const alpha = (0.55 + 0.45*hot) * p.fade;     // never fades into the background
-    const rr = r * (0.3 + 0.7*p.grow);
+    // a call running on this body right now: a visible pulse. Everything else
+    // recently touched just breathes a little, so the field is never dead still.
+    const act = running.has(p.id) || p.flash > 0.25;
+    const beat = act ? (Math.sin(now/170 + p.jit)+1)/2 : 0;
+    const breathe = reduce ? 0 : Math.sin(now/560 + p.jit)*0.03*hot;
+    const rr = r * (0.3 + 0.7*p.grow) * (1 + breathe + (reduce ? 0 : beat*0.17));
     ctx.save(); ctx.globalAlpha = alpha;
-    ctx.shadowColor = col; ctx.shadowBlur = 8 + hot*20;
+    if (act && !reduce){                          // halo of a call in progress
+      ctx.strokeStyle = hexA(col, 0.5*(1-beat));
+      ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(p.x, p.y, rr + 5 + beat*13, 0, 7); ctx.stroke();
+    }
+    ctx.shadowColor = col; ctx.shadowBlur = 8 + hot*20 + beat*18;
     ctx.fillStyle = hexA(col, 0.20 + 0.25*hot);
     ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, 7); ctx.fill();
     ctx.shadowBlur = 0;
