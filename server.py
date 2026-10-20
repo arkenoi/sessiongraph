@@ -41,11 +41,48 @@ def target_of(tool, inp):
     return ""
 
 
+def session_meta(path, limit=24000):
+    """Cheap description of a transcript: first prompt, cwd, branch, size, mtime."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    title, cwd, branch, turns = None, None, None, 0
+    try:
+        with open(path, "r", errors="replace") as fh:
+            for line in fh.read(limit).split("\n"):
+                if not line.strip():
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                cwd = cwd or rec.get("cwd")
+                branch = branch or rec.get("gitBranch")
+                if rec.get("type") == "assistant":
+                    turns += 1
+                if title is None and rec.get("type") == "user" and not rec.get("toolUseResult"):
+                    c = (rec.get("message") or {}).get("content")
+                    txt = c if isinstance(c, str) else " ".join(
+                        b.get("text", "") for b in c if isinstance(b, dict)) if isinstance(c, list) else ""
+                    txt = " ".join(txt.split())
+                    if txt:
+                        title = txt[:90]
+    except OSError:
+        return None
+    return {"file": path, "name": os.path.basename(path)[:8],
+            "title": title or "(no prompt yet)", "cwd": cwd, "branch": branch,
+            "turns_seen": turns, "size": st.st_size, "mtime": st.st_mtime}
+
+
 class Tailer:
     """One session file -> one incrementally-built graph."""
 
-    def __init__(self, path, root=None, follow_newest=True, attribution="caused"):
+    def __init__(self, path, root=None, follow_newest=True, attribution="caused",
+                 events_cmd=None):
         self.root, self.follow = root, follow_newest
+        self.events_cmd = events_cmd
+        self.cmd_sig = None
         self.lock = threading.Lock()
         self.subs = []
         self.set_path(path)
@@ -66,6 +103,9 @@ class Tailer:
             rec = json.loads(line)
         except Exception:
             return
+        self._ingest_rec(rec)
+
+    def _ingest_rec(self, rec):
         self.g.ingest(rec)
         ts = parse_ts(rec.get("timestamp"))
         if ts:
@@ -86,6 +126,8 @@ class Tailer:
                                    "text": n["attrs"].get("text_preview")})
 
     def poll(self):
+        if self.events_cmd:                       # remote: whatever you give us
+            return self._poll_cmd()
         if self.follow:
             newest = (find_sessions(self.root) or [None])[0]
             if newest and newest != self.path:
@@ -110,6 +152,46 @@ class Tailer:
                 if ln.strip():
                     self._ingest_line(ln.decode("utf-8", "replace"))
         return True
+
+    def _poll_cmd(self):
+        """Run the user's own command and rebuild from whatever it prints.
+
+        The command carries its own credentials; this process never sees a
+        token. A dump is usually a whole JSON array, so it is re-read entire
+        rather than tailed.
+        """
+        import subprocess
+        try:
+            out = subprocess.run(self.events_cmd, shell=True, capture_output=True,
+                                 text=True, timeout=120).stdout
+        except Exception as e:
+            print("events-cmd failed:", e, file=sys.stderr)
+            return False
+        sig = (len(out), hash(out))
+        if sig == self.cmd_sig:
+            return False
+        self.cmd_sig = sig
+        with self.lock:
+            self.set_path(self.path)              # reset the graph
+            tmp = os.path.join(HERE, ".events-cache.json")
+            try:
+                with open(tmp, "w") as fh:
+                    fh.write(out)
+                from sessiongraph import iter_records
+                for rec in iter_records(tmp):
+                    self._ingest_rec(rec)
+            except Exception as e:
+                print("events-cmd parse failed:", e, file=sys.stderr)
+                return False
+        return True
+
+    def select(self, path):
+        """Attach to a specific transcript and stop following the newest."""
+        with self.lock:
+            self.follow = False
+            self.set_path(path)
+        self.poll()
+        self.broadcast()
 
     # -- what the HUD needs
     def snapshot(self):
@@ -211,6 +293,29 @@ def make_handler(tailer):
                         return self._send(fh.read())
                 except OSError:
                     return self._send("hud.html missing next to server.py", code=500)
+            if p == "/sessions":
+                items = [session_meta(f) for f in find_sessions(tailer.root)[:60]]
+                items = [i for i in items if i]
+                for i in items:
+                    i["active"] = (i["file"] == tailer.path)
+                return self._send(json.dumps({"sessions": items,
+                                              "follow": tailer.follow,
+                                              "current": tailer.path}),
+                                  "application/json")
+            if p == "/select":
+                from urllib.parse import urlparse, parse_qs, unquote
+                q = parse_qs(urlparse(self.path).query)
+                want = unquote((q.get("file") or [""])[0])
+                if want == "__newest__":
+                    tailer.follow = True
+                    tailer.poll(); tailer.broadcast()
+                    return self._send(json.dumps({"ok": True, "follow": True}), "application/json")
+                known = set(find_sessions(tailer.root))     # only files we listed
+                if want not in known:
+                    return self._send(json.dumps({"ok": False, "error": "unknown session"}),
+                                      "application/json", code=400)
+                tailer.select(want)
+                return self._send(json.dumps({"ok": True, "file": want}), "application/json")
             if p == "/graph.json":
                 return self._send(json.dumps(tailer.snapshot(), default=str),
                                   "application/json")
@@ -249,16 +354,25 @@ def main():
     ap.add_argument("--root", help="override ~/.claude/projects")
     ap.add_argument("--port", type=int, default=8777)
     ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--events-cmd", help="shell command that prints a session's events "
+                                        "(JSON array or JSONL); re-run every --interval "
+                                        "seconds. It carries its own credentials.")
+    ap.add_argument("--interval", type=float, default=0.5, help="poll seconds")
     ap.add_argument("--no-follow", action="store_true",
                     help="stay on one file instead of jumping to the newest session")
     a = ap.parse_args()
     path = a.file or (find_sessions(a.root) or [None])[0]
-    if not path:
+    if not path and not a.events_cmd:
         sys.exit("no transcripts found under %s" % (a.root or "~/.claude/projects"))
-    t = Tailer(path, root=a.root, follow_newest=not a.no_follow)
-    threading.Thread(target=t.run, daemon=True).start()
+    t = Tailer(path or "", root=a.root,
+               follow_newest=not (a.no_follow or a.file or a.events_cmd),
+               events_cmd=a.events_cmd)
+    threading.Thread(target=t.run, kwargs={"interval": max(0.2, a.interval)},
+                     daemon=True).start()
     srv = ThreadingHTTPServer((a.host, a.port), make_handler(t))
-    print(f"HUD  http://{a.host}:{a.port}/   tailing {os.path.basename(path)}")
+    src = ("events-cmd: " + a.events_cmd[:60]) if a.events_cmd else \
+          ("tailing " + os.path.basename(path)) if path else "waiting for a session"
+    print(f"HUD  http://{a.host}:{a.port}/   {src}")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

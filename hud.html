@@ -99,6 +99,20 @@
        background:#050810;border:1px solid var(--line-hot);border-radius:2px;
        padding:6px 8px;font-size:11px;line-height:1.5;box-shadow:0 6px 24px rgba(0,0,0,.6)}
   #tip .h{color:var(--ink);font-weight:600} #tip .r{color:var(--ink-2)}
+  #picker{position:fixed;inset:60px 10% 60px 10%;z-index:72;display:none;overflow:auto;
+          background:#050810;border:1px solid var(--line-hot);padding:16px}
+  #picker h3{margin:0 0 12px;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
+  .sess{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:baseline;
+        padding:8px 10px;border:1px solid var(--line);margin-bottom:6px;cursor:pointer;background:var(--surface-1)}
+  .sess:hover{border-color:var(--line-hot);background:var(--surface-2)}
+  .sess.on{border-color:var(--good)}
+  .sess .id{font-size:11px;color:var(--c-agent)}
+  .sess .ti{font-size:12px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sess .sub{font-size:10px;color:var(--ink-3)}
+  .sess .rt{font-size:10px;color:var(--ink-3);text-align:right;white-space:nowrap;
+            font-variant-numeric:tabular-nums}
+  #nowmeta{cursor:pointer}
+  #nowmeta:hover{color:var(--ink-2)}
   #table{position:fixed;inset:24px;z-index:70;display:none;overflow:auto;
          background:#050810;border:1px solid var(--line-hot);padding:16px}
   table{border-collapse:collapse;width:100%;font-size:12px}
@@ -120,7 +134,7 @@
     <canvas id="ekg" width="300" height="56" title="tool calls per 3s"></canvas>
     <span id="doing">waiting for the first record…</span>
     <span id="elapsed">—</span>
-    <span class="meta" id="nowmeta"></span>
+    <span class="meta" id="nowmeta" title="click to attach to another session"></span>
   </div>
 
   <div id="tiles">
@@ -147,7 +161,7 @@
     </div>
     <canvas id="glyphs" width="980" height="86"></canvas>
     <div id="mode">live</div>
-    <div id="hint">drag scrub · wheel zoom · R replay · T table · space freeze</div>
+    <div id="hint">drag scrub · wheel zoom · S sessions · R replay · T table · space freeze</div>
   </div>
 
   <div class="panel" id="feed">
@@ -161,6 +175,7 @@
   </div>
 </div>
 <div id="tip"></div>
+<div id="picker"><h3>Attach to a session — click one · S to close</h3><div id="picklist"></div></div>
 <div id="table"><h3 style="margin:0 0 10px;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)">Entities by attributed cost — press T to close</h3><div id="tablebody"></div></div>
 
 <script>
@@ -741,6 +756,7 @@ addEventListener('keydown', ev => {
   const k = ev.key.toLowerCase();
   if (k===' '){ frozen = !frozen; ev.preventDefault(); }
   if (k==='t') showTable();
+  if (k==='s') showPicker();
   if (k==='r') mode==='live' ? startReplay() : goLive();
   if (k==='escape' || k==='enter') goLive();
   if (k==='[' && mode==='replay') rate *= 0.6;
@@ -787,6 +803,38 @@ mcv.addEventListener('click', ev => {
   $('mode').style.color='var(--c-artifact)'; paintChrome();
 });
 
+// ---------------------------------------------------------------- picker ----
+async function showPicker(force){
+  const el = $('picker');
+  if (!force && el.style.display === 'block'){ el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  $('picklist').innerHTML = '<div class="sub" style="color:var(--ink-3)">reading ~/.claude/projects…</div>';
+  let d;
+  try { d = await (await fetch('/sessions')).json(); }
+  catch(e){ $('picklist').innerHTML = '<div class="sub">could not list sessions</div>'; return; }
+  const ago = t => { const s = Date.now()/1000 - t;
+    return s < 90 ? s.toFixed(0)+'s ago' : s < 5400 ? (s/60).toFixed(0)+'m ago'
+         : s < 172800 ? (s/3600).toFixed(1)+'h ago' : (s/86400).toFixed(0)+'d ago'; };
+  const rows = [`<div class="sess ${d.follow?'on':''}" data-file="__newest__">`+
+    `<span class="id">auto</span><span class="ti">Follow whichever session is newest`+
+    `<div class="sub">re-points by itself when a new session starts</div></span>`+
+    `<span class="rt">${d.follow?'active':''}</span></div>`];
+  for (const s of d.sessions){
+    rows.push(`<div class="sess ${s.active?'on':''}" data-file="${esc(s.file)}">`+
+      `<span class="id">${esc(s.name)}</span>`+
+      `<span class="ti">${esc(s.title)}<div class="sub">${esc(s.cwd||'')}`+
+      `${s.branch?' · '+esc(s.branch):''} · ${(s.size/1024).toFixed(0)} kB</div></span>`+
+      `<span class="rt">${ago(s.mtime)}${s.active?'<br>attached':''}</span></div>`);
+  }
+  $('picklist').innerHTML = rows.join('');
+  $('picklist').querySelectorAll('.sess').forEach(el2 => el2.addEventListener('click', async () => {
+    const f = el2.getAttribute('data-file');
+    $('picklist').innerHTML = '<div class="sub">attaching…</div>';
+    try { await fetch('/select?file=' + encodeURIComponent(f)); } catch(e){}
+    $('picker').style.display = 'none';
+    snap = null; booted = false; N = new Map(); EV = []; seenEv = new Set(); rowY.clear();
+  }));
+}
 function showTable(){
   const el = $('table');
   if (el.style.display === 'block'){ el.style.display='none'; return; }
@@ -800,6 +848,7 @@ function showTable(){
   el.style.display='block';
 }
 
+$('nowmeta').addEventListener('click', () => showPicker(true));
 let lastT = performance.now();
 function frame(now){
   const dt = Math.min(0.1,(now-lastT)/1000); lastT = now;

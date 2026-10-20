@@ -33,8 +33,30 @@ writes to `~/.claude`.
 | Claude Code on the web / cloud | inside the session container | see *Cloud sessions* below |
 | claude.ai chat (not Code) | nowhere on disk | not supported |
 
-It follows whichever session file is newest, so when an RC session wakes up the
-stream re-points to it on its own. Nothing to configure.
+### Picking one
+
+By default it follows whichever session file is newest, so when an RC session
+wakes up the stream re-points to it on its own. To choose explicitly, press `S`
+in the HUD (or click the session line at the top right) and pick from the list —
+each row shows the session's first prompt, its working directory and branch, and
+how long ago it was last written:
+
+```
+auto        Follow whichever session is newest
+bbbb2222    investigate the flaky test        /home/user/other · main      29s ago
+aaaa1111    add a parser                      /home/user/proj  · main      2.0h ago
+```
+
+Picking one pins it; the `auto` row hands control back. The same thing from the
+command line, if you already know which file you want:
+
+```sh
+python3 server.py --file ~/.claude/projects/<project>/<uuid>.jsonl --no-follow
+```
+
+Under the hood that is `GET /sessions` and `GET /select?file=…`, and `/select`
+only accepts paths it just listed under `--root`, so the endpoint can't be talked
+into reading arbitrary files.
 
 If the machine running RC is headless, forward the port and watch from your laptop:
 
@@ -44,6 +66,30 @@ ssh -L 8777:127.0.0.1:8777 you@that-box      # then open http://127.0.0.1:8777/
 
 Useful flags: `--root /path/to/projects` for a non-default location,
 `--file <session>.jsonl` plus `--no-follow` to pin one session, `--port`.
+
+## Credentials
+
+**There are none, and the tool has no way to accept a token.** It reads files off
+your disk; it makes no outbound connections and reads no environment variables.
+That is the whole security model for a local or RC session.
+
+The one case that needs credentials is pulling a *cloud* session's events over the
+API — and rather than hold your token, the server runs a command you give it and
+parses whatever that prints:
+
+```sh
+python3 server.py --events-cmd 'your-command-that-prints-events' --interval 10
+```
+
+The command runs in your shell, with your credentials, under your control; this
+process never sees them. It can print either shape — a JSON array, the
+`{"ccr":{"data":[…]}}` envelope, or JSONL — and is re-read whole each time, so a
+command that overwrites a dump works fine. Anything that can produce that dump
+will do: a CLI you already have, a script, or a Claude session with access to the
+remote session's events writing them to a file (`--events-cmd 'cat dump.json'`).
+
+If you ever find yourself wanting to paste a token into this tool, don't — put it
+in the command instead.
 
 ### Cloud sessions
 
