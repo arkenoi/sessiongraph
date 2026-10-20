@@ -156,7 +156,7 @@
     <canvas id="cv"></canvas>
         <canvas id="glyphs" width="1480" height="132"></canvas>
     <div id="mode">live</div>
-    <div id="hint">drag scrub · wheel zoom · S sessions · R replay · T table · space freeze</div>
+    <div id="hint">drag scrub · wheel zoom · - / = universe size · S sessions · R replay · T table · space freeze</div>
   </div>
 
   <div class="panel" id="feed">
@@ -464,120 +464,203 @@ function kindIcon(c, type, x, y, s, col, fade){
   c.restore();
 }
 
-// ------------------------------------------------------------- the field ----
-// Centred on the work, not on the clock. The agent is the core; everything it
-// touches sits around it at a distance set by how long ago it was touched.
-// Coming back to something pulls it inward again -- it is never drawn twice.
-const ENT = new Map();
-const SECTOR = {                       // degrees; 0 = right, 90 = down
-  artifact: {c:-90, w:150},            // what it makes and reads, above
-  agent:    {c:170, w:120},            // what it runs, to the left
-  world:    {c: 20, w:120},            // what it reaches for outside, to the right
-};
-const HOT = 50;        // seconds of session time before a thing is fully cold
-let ZOOM = 1;
-let ptr = 0, lastRefSeen = null;
+// ------------------------------------------------------------- the graph ----
+// The real graph, not a star. Agents use tools; tools touch things; things
+// live inside directories inside repos; searches yield urls; commits land in
+// repos; agents spawn agents. Layout is force-directed over those edges, with
+// recency as a gentle pull toward the centre so what is being worked on now
+// sits in the middle and the rest settles outward -- but structure wins.
+const ENT = new Map();            // id -> body (visible node)
+const EDGES = new Map();          // "src>dst>type" -> edge
+const POS = new Map();            // id -> {x,y}: positions survive rebuilds
+const MAIN = 'agent:main', SUB = 'agent:subagent';
+let ptr = 0, lastRefSeen = null, ZOOM = 1, dirty = false;
+let KEEP = 32;                    // how many things the universe holds; the rest expire (- / = to change)
+const MAXN = 170;                 // hard cap, in case KEEP's containers pile up
 
+const REST = {CONTAINS:40, USED:118, SPAWNED:110, YIELDED:70, IN_REPO:56, MENTIONS:95, TOUCH:96};
 const hashf = s => { let h = 0; for (let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i))|0; return Math.abs(h); };
-const RAD = () => Math.min(C.w*0.56, C.h*0.52) - 26;
-const RIN = () => RAD()*0.31*ZOOM, ROUT = () => RAD()*0.95*ZOOM;
+const RAD = () => Math.min(C.w*0.5, C.h*0.5) - 30;
 
-function spawn(n, id, verb){
-  const cls = CLASS[n.type] || 'agent';
+function synthetic(id){
+  if (id === MAIN) return {id, type:'agent', label:'agent', attrs:{}, usd:0};
+  if (id === SUB)  return {id, type:'agent', label:'subagents', attrs:{}, usd:0};
+  const [t, ...rest] = id.split(':');
+  return {id, type:t, label:rest.join(':').split('/').pop() || id, attrs:{}, usd:0};
+}
+
+function spawn(n, id, verb, near){
+  const cls = CLASS[n.type] || 'agent', cx = C.w/2, cy = C.h*0.47, h = hashf(id);
   const out = (VERB_DIR[verb] || 0) > 0;
-  return {id, n, cls, verb: verb || 'execute',
-          a: (SECTOR[cls].c)*Math.PI/180, r: out ? 6 : ROUT()*1.25,
-          x: C.w/2, y: C.h*0.46, touches: 0, burn: 0, last: -1e9, flash: 1,
-          err: false, fade: out ? 1 : 0, grow: out ? 0.08 : 1, seed: hashf(id)};
+  const p = {id, n, cls, type:n.type, verb: verb || '', touches:0, burn:0, last:-1e9, first:1e18,
+             flash:1, err:false, fade:1, grow:1, seed:h, vx:0, vy:0, deg:0, rad:9};
+  const kept = POS.get(id);
+  if (kept && Math.hypot(kept.x-cx, kept.y-cy) < RAD()*1.05){ p.x = kept.x; p.y = kept.y; p.fade = 0.4; }
+  else if (id === MAIN){ p.x = cx; p.y = cy; }
+  else if (near){                                   // beside what it is attached to
+    const a = (h % 360) * Math.PI/180; p.x = near.x + Math.cos(a)*38; p.y = near.y + Math.sin(a)*38; p.fade = 0;
+  } else if (out){                                  // made: thrown out of the agent
+    p.x = cx; p.y = cy; p.vx = Math.cos(h)*4; p.vy = Math.sin(h)*4; p.grow = 0.08;
+  } else {                                          // reached for: surfaces at the rim
+    const a = (h % 360) * Math.PI/180, r = RAD()*0.92;
+    p.x = cx + Math.cos(a)*r; p.y = cy + Math.sin(a)*r; p.fade = 0;
+  }
+  return p;
+}
+
+function ensure(id, ref, verb, near){
+  let p = ENT.get(id);
+  if (p) return p;
+  const n = NODE.get(id) || synthetic(id);
+  p = spawn(n, id, verb, near); ENT.set(id, p); dirty = true;
+  p.first = Math.min(p.first, ref);
+  return p;
+}
+function touch(p, ref, verb, e){
+  p.touches++; p.last = ref; p.flash = 1;
+  if (verb) p.verb = verb;
+  if (e){ p.err = !!e.err; p.target = e.target; p.burn += (e.usd || 0)/Math.max(1, (e.nodes||[]).length); }
+}
+function link(src, dst, type, ref, extra){
+  if (src === dst) return;
+  const k = src+'>'+dst+'>'+type;
+  let e = EDGES.get(k);
+  if (!e){ e = {src, dst, type, w:0, first:ref, last:-1e9, ...(extra||{})}; EDGES.set(k, e); dirty = true; }
+  e.w++; e.last = ref; e.flash = 1;
+  if (extra && extra.verb) e.verb = extra.verb;
+  return e;
 }
 
 function feed(e){
   const ref = refTime();
+  const agentId = e.sidechain ? SUB : MAIN;
+  const A = ensure(agentId, ref); touch(A, ref);
+  if (e.sidechain){ ensure(MAIN, ref); link(MAIN, SUB, 'SPAWNED', ref); }
+  const toolId = 'tool:' + (e.tool || '?');
+  const T = ensure(toolId, ref, '', A); touch(T, ref);
+  link(agentId, toolId, 'USED', ref);
   for (const id of (e.nodes || [])){
-    const n = NODE.get(id);
-    if (!n) continue;
-    let p = ENT.get(id);
-    if (!p){ p = spawn(n, id, e.verb); ENT.set(id, p); }
-    p.n = n; p.touches++; p.last = ref; p.flash = 1;
-    p.verb = e.verb || 'execute'; p.err = !!e.err; p.target = e.target;
-    p.burn = (p.burn || 0) + (e.usd || 0)/Math.max(1, (e.nodes||[]).length);
+    const P = ensure(id, ref, e.verb, null); touch(P, ref, e.verb, e);
+    link(toolId, id, 'TOUCH', ref, {verb: e.verb, tool: e.tool});
   }
+}
+
+// structure that is not a tool touch: containment, yields, commits, spawns
+function linkStructure(ref){
+  if (!snap) return;
+  for (const ed of (snap.edges || [])){
+    if (ed.t0 != null && ed.t0 > ref) continue;
+    let src = ed.src, dst = ed.dst, type = ed.type;
+    if (type === 'CONTAINS' || type === 'YIELDED' || type === 'IN_REPO'){
+      const child = type === 'IN_REPO' ? src : dst, parent = type === 'IN_REPO' ? dst : src;
+      if (!ENT.has(child)) continue;                // a container appears with its first child
+      ensure(parent, ref, '', ENT.get(child));
+      if (!EDGES.has(src+'>'+dst+'>'+type)) link(src, dst, type, ed.t0 ?? ref);
+    } else if (type === 'SPAWNED' || type === 'MENTIONS'){
+      if (!ENT.has(dst)) continue;
+      if (!EDGES.has(MAIN+'>'+dst+'>'+type)) link(MAIN, dst, type, ed.t0 ?? ref);
+    }
+  }
+  // what a container holds is as fresh as its freshest child
+  for (const e of EDGES.values()){
+    if (e.type !== 'CONTAINS' && e.type !== 'IN_REPO') continue;
+    const parent = ENT.get(e.type === 'IN_REPO' ? e.dst : e.src), child = ENT.get(e.type === 'IN_REPO' ? e.src : e.dst);
+    if (parent && child && child.last > parent.last) parent.last = child.last;
+  }
+}
+
+// Things never used to leave; a session of any length became clutter. Now the
+// universe holds the KEEP most recently touched things plus whatever they hang
+// off (their folders, their tools). Everything else is expiring: it drifts past
+// the rim and fades out. Touch it again and it is pulled straight back in.
+function expire(){
+  const things = [...ENT.values()].filter(p => p.id !== MAIN && p.id !== SUB);
+  const ranked = things.filter(p => !['dir','repo','domain','tool','agent'].includes(p.type))
+                       .sort((a,b) => b.last - a.last);
+  const keep = new Set(ranked.slice(0, KEEP).map(p => p.id));
+  for (let pass = 0; pass < 2; pass++)              // containers and hubs of kept things
+    for (const e of EDGES.values()){
+      const a = ENT.get(e.src), b = ENT.get(e.dst); if (!a || !b) continue;
+      if (keep.has(b.id) && (a.type === 'dir' || a.type === 'repo' || a.type === 'domain' || a.type === 'tool' || a.type === 'agent')) keep.add(a.id);
+      if (keep.has(a.id) && e.type === 'IN_REPO') keep.add(b.id);
+    }
+  for (const p of things) p.expiring = !keep.has(p.id);
+}
+function retire(p){
+  POS.set(p.id, {x:p.x, y:p.y}); ENT.delete(p.id);
+  for (const k of [...EDGES.keys()]) if (k.startsWith(p.id+'>') || k.includes('>'+p.id+'>')) EDGES.delete(k);
 }
 
 function pump(ref){
   if (lastRefSeen != null && ref < lastRefSeen - 1){
-    ENT.clear(); ptr = 0;
-    while (ptr < EV.length && EV[ptr].ts < ref - 240) ptr++;
+    for (const p of ENT.values()) POS.set(p.id, {x:p.x, y:p.y});
+    ENT.clear(); EDGES.clear(); ptr = 0;
+    while (ptr < EV.length && EV[ptr].ts < ref - 600) ptr++;
   }
   lastRefSeen = ref;
-  while (ptr < EV.length && EV[ptr].ts <= ref){ feed(EV[ptr]); ptr++; }
+  let fed = 0;
+  while (ptr < EV.length && EV[ptr].ts <= ref){ feed(EV[ptr]); ptr++; fed++; }
+  if (fed || dirty){ linkStructure(ref); degrees(); expire(); prune(); dirty = false; }
+}
+function degrees(){
+  for (const p of ENT.values()) p.deg = 0;
+  for (const e of EDGES.values()){ const a = ENT.get(e.src), b = ENT.get(e.dst); if (a) a.deg++; if (b) b.deg++; }
+}
+function prune(){
+  if (ENT.size <= MAXN) return;
+  const leaves = [...ENT.values()].filter(p => p.deg <= 1 && p.id !== MAIN && p.type !== 'agent')
+                                  .sort((a,b) => a.last - b.last);
+  for (const p of leaves.slice(0, ENT.size - MAXN)){
+    POS.set(p.id, {x:p.x, y:p.y}); ENT.delete(p.id);
+    for (const k of [...EDGES.keys()]) if (k.startsWith(p.id+'>') || k.includes('>'+p.id+'>')) EDGES.delete(k);
+  }
+  degrees();
 }
 
-// Each kind gets a slice of the circle in proportion to how much of it there
-// is, so twenty-five commands are not crushed into the same wedge as three
-// files. Newest sits in the middle of its slice; distance is recency.
-const CLS_ORDER = ['artifact', 'world', 'agent'];
-function arrange(ref){
-  const cx = C.w/2, cy = C.h*0.46, rin = RIN(), rout = ROUT();
-  const byCls = {artifact:[], agent:[], world:[]};
-  for (const p of ENT.values()) (byCls[p.cls] || byCls.agent).push(p);
-  // Distance is RANK, not seconds: the most recently worked-on thing holds the
-  // centre whether the session is live or was last touched a day ago. Absolute
-  // recency put everything at the rim on any historical session.
-  const ranked = [...ENT.values()].sort((x,y) => y.last - x.last);
-  const rank = new Map(ranked.map((p,i) => [p.id, i]));
-  const span = Math.max(1, ranked.length - 1);
-  const counts = CLS_ORDER.map(c => byCls[c].length);
-  const total = Math.max(1, counts.reduce((x,y)=>x+y,0));
-  const MIN = 34;                                   // degrees a non-empty kind always gets
-  let spare = 360 - CLS_ORDER.reduce((acc,c,i) => acc + (counts[i] ? MIN : 0), 0);
-  let cursor = -90;
-  for (let ci=0; ci<CLS_ORDER.length; ci++){
-    const cls = CLS_ORDER[ci], list = byCls[cls];
-    if (!list.length) continue;
-    const arc = MIN + spare * (list.length/total);
-    const mid = cursor + arc/2;
-    list.sort((x,y) => y.last - x.last);
-    const n = list.length;
-    list.forEach((p, i) => {
-      const t = n === 1 ? 0 : (i - (n-1)/2)/(n-1);
-      const ta = (mid + t*arc*0.92 + Math.sin(performance.now()/2600 + p.seed)*0.8) * Math.PI/180;
-      p.prox = 1 - (rank.get(p.id) || 0)/span;         // 1 = most current
-      // stagger neighbours in depth a little so a crowded slice does not stack
-      const stagger = ((i % 3) - 1) * (rout-rin) * 0.045;
-      const tr = Math.max(rin*0.8, rin + (1-p.prox)*(rout-rin) + stagger);
-      let da = ta - p.a;
-      while (da > Math.PI) da -= 2*Math.PI;
-      while (da < -Math.PI) da += 2*Math.PI;
-      p.a += da * 0.07;
-      p.r += (tr - p.r) * (p.r > tr ? 0.09 : 0.05);
-      p.fade += (1 - p.fade)*0.055;
-      p.grow += (1 - p.grow)*0.075;
-      p.flash = Math.max(0, p.flash - 0.02);
-      p.x = cx + Math.cos(p.a)*p.r;
-      p.y = cy + Math.sin(p.a)*p.r;
-      if (p.r > rout*1.3) ENT.delete(p.id);
-    });
-  }
-  // and finally push apart anything still overlapping, around the ring
-  const arr = [...ENT.values()];
-  for (let k=0;k<3;k++){
-    for (let i=0;i<arr.length;i++){
-      for (let j=i+1;j<arr.length;j++){
-        const A = arr[i], B = arr[j];
-        const dx = B.x-A.x, dy = B.y-A.y, dist = Math.hypot(dx,dy);
-        const want = (A.rad||14) + (B.rad||14) + 26;
-        if (dist >= want || dist < 0.01) continue;
-        const push = (want-dist)/want * 0.5;
-        const sign = (B.a > A.a) ? 1 : -1;
-        A.a -= sign*0.012*push; B.a += sign*0.012*push;
-        A.r -= push*1.4; B.r += push*1.4;
-        A.r = Math.max(rin*0.92, A.r); B.r = Math.max(rin*0.92, B.r);
-        A.x = cx + Math.cos(A.a)*A.r; A.y = cy + Math.sin(A.a)*A.r;
-        B.x = cx + Math.cos(B.a)*B.r; B.y = cy + Math.sin(B.a)*B.r;
-      }
+function physics(ref){
+  const arr = [...ENT.values()], cx = C.w/2, cy = C.h*0.47, R = RAD()*ZOOM;
+  const ranked = arr.slice().sort((x,y) => y.last - x.last);
+  const span = Math.max(1, ranked.length-1);
+  ranked.forEach((p,i) => p.prox = 1 - i/span);
+  for (let i=0;i<arr.length;i++){                   // repulsion
+    const a = arr[i];
+    for (let j=i+1;j<arr.length;j++){
+      const b = arr[j];
+      let dx = b.x-a.x, dy = b.y-a.y, d2 = dx*dx+dy*dy;
+      if (d2 < 1){ dx = (hashf(a.id)%7-3)*0.1; dy = (hashf(b.id)%7-3)*0.1; d2 = 1; }
+      if (d2 > 160000) continue;
+      const hubs = (a.type==='tool'||a.type==='agent') && (b.type==='tool'||b.type==='agent');
+      const want = (a.rad + b.rad + (hubs ? 90 : 34)), f = 2600/d2 + (d2 < want*want ? (want*want-d2)/(want*want)*(hubs ? 3 : 1.6) : 0);
+      const d = Math.sqrt(d2), fx = dx/d*f, fy = dy/d*f;
+      a.vx -= fx; a.vy -= fy; b.vx += fx; b.vy += fy;
     }
   }
+  for (const e of EDGES.values()){                   // springs
+    const a = ENT.get(e.src), b = ENT.get(e.dst); if (!a || !b) continue;
+    const rest = (REST[e.type] || 90) * (0.85 + 0.3*ZOOM);
+    let dx = b.x-a.x, dy = b.y-a.y, d = Math.hypot(dx,dy) || 1;
+    const fileEnd = (b.type === 'file' || a.type === 'file');
+    const k = e.type === 'CONTAINS' ? 0.07 : (e.type === 'TOUCH' && fileEnd) ? 0.010 : e.type === 'USED' ? 0.03 : 0.018;
+    const f = (d-rest)*k;
+    a.vx += dx/d*f; a.vy += dy/d*f; b.vx -= dx/d*f; b.vy -= dy/d*f;
+  }
+  for (const p of arr){                              // recency pulls inward, gently
+    const tr = p.expiring ? R*1.18 : R*(0.18 + 0.78*(1-p.prox));
+    const dx = p.x-cx, dy = p.y-cy, d = Math.hypot(dx,dy) || 1;
+    const f = (tr - d) * (p.expiring ? 0.012 : 0.006);
+    p.vx += dx/d*f; p.vy += dy/d*f;
+    p.flash = Math.max(0, p.flash - 0.02); p.grow += (1-p.grow)*0.075;
+    if (p.expiring) p.fade = Math.max(0, p.fade - 0.018);     // the expanding universe
+    else p.fade += (1-p.fade)*0.06;
+  }
+  for (const p of arr) if (p.expiring && p.fade <= 0.02) retire(p);
+  for (const p of arr){
+    if (p.id === MAIN){ p.x = cx; p.y = cy; p.vx = p.vy = 0; continue; }
+    p.vx *= 0.82; p.vy *= 0.82;
+    p.x += Math.max(-12, Math.min(12, p.vx)); p.y += Math.max(-12, Math.min(12, p.vy));
+    if (!p.expiring){ p.x = Math.max(40, Math.min(C.w-40, p.x)); p.y = Math.max(34, Math.min(C.h-104, p.y)); }
+  }
+  for (const e of EDGES.values()) e.flash = Math.max(0, (e.flash||0) - 0.02);
 }
 
 // ---------------------------------------------------------------- field ----
@@ -593,12 +676,10 @@ function drawGlyphKey(){
   gx.font = '11px ui-monospace,monospace'; gx.textAlign = 'left'; gx.textBaseline = 'middle';
   const perRow = 7, cw = 86, rh = 23;
   VERBS.forEach((v,i) => {
-    const col = i % perRow, row = (i/perRow)|0;
-    const x = 10 + col*cw, y = 11 + row*rh;
-    glyph(gx, v, x, y, 5.4, '#b2c2d6', 1);
-    gx.fillStyle = '#8296ae'; gx.fillText(v, x+11, y+0.5);
+    const col = i % perRow, row = (i/perRow)|0, x = 10 + col*cw, y = 11 + row*rh;
+    glyph(gx, v, x, y, 5.4, '#b2c2d6', 1); gx.fillStyle = '#8296ae'; gx.fillText(v, x+11, y+0.5);
   });
-  const KIND = [['#c98500','artifacts'],['#3987e5','agent'],['#d55181','world']];
+  const KIND = [['#c98500','artifacts'],['#3987e5','agent · tools'],['#d55181','world']];
   let kx = 10;
   KIND.forEach(([c,label]) => {
     gx.fillStyle = c; gx.beginPath(); gx.arc(kx+4, 11+2*23, 4.5, 0, 7); gx.fill();
@@ -606,106 +687,122 @@ function drawGlyphKey(){
     kx += 13 + gx.measureText(label).width + 16;
   });
   gx.fillStyle = '#8296ae';
-  gx.fillText('size = tokens burned · centre = what it is working on now · ×n = times returned to',
-              kx + 6, 11 + 2*23);
+  gx.fillText('agent → tool → thing · folder ⊃ file · search → url · size = burned · inner = current · ×n = returns', kx + 6, 11 + 2*23);
+}
+
+function arrow(c, x1, y1, x2, y2, t, col, a, size){
+  const x = x1 + (x2-x1)*t, y = y1 + (y2-y1)*t, ang = Math.atan2(y2-y1, x2-x1);
+  c.save(); c.translate(x, y); c.rotate(ang);
+  c.fillStyle = hexA(col, a); c.beginPath(); c.moveTo(size, 0); c.lineTo(-size*0.8, size*0.6); c.lineTo(-size*0.8, -size*0.6); c.closePath(); c.fill();
+  c.restore();
 }
 
 function drawStream(now){
   const {w,h,d} = C; ctx.setTransform(d,0,0,d,0,0); ctx.clearRect(0,0,w,h);
   if (!snap) return;
-  const ref = refTime(), cx = w/2, cy = h*0.46;
+  const ref = refTime(), cx = w/2, cy = h*0.47;
   pump(ref);
-  if (!frozen) arrange(ref);
+  if (!frozen) physics(ref);
   drawGlyphKey();
+  for (const p of ENT.values()) POS.set(p.id, {x:p.x, y:p.y});
 
-  // rings of forgetting: how far out a thing sits is how long since it was used
-  const rin = RIN(), rout = ROUT();
+  // faint recency rings so the radial meaning is readable
+  const R = RAD()*ZOOM;
   ctx.font = '11px ui-monospace,monospace'; ctx.textAlign = 'right';
-  for (const [frac, label] of [[0,'at work'],[0.5,'earlier'],[1,'done with']]){
-    const r = rin + frac*(rout-rin);
-    ctx.strokeStyle = 'rgba(57,135,229,.13)'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.stroke();
-    ctx.fillStyle = 'rgba(130,150,174,.7)';
-    ctx.fillText(label, cx - r*0.93, cy + r*0.38);     // quiet left flank
+  for (const [f,label] of [[0.18,'at work'],[0.57,'earlier'],[0.96,'forgetting']]){
+    ctx.strokeStyle = 'rgba(57,135,229,.10)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(cx, cy, R*f, 0, 7); ctx.stroke();
+    ctx.fillStyle = 'rgba(130,150,174,.55)'; ctx.fillText(label, cx - R*f*0.93, cy + R*f*0.38);
   }
 
-  // links first, so the bodies sit on top of them
-  const ents = [...ENT.values()].sort((a,b) => a.last - b.last);
-  for (const p of ents){
-    const hot = p.prox != null ? p.prox : 1;
-    const col = COLOR[p.cls], a = (0.08 + 0.6*hot) * p.fade;
-    ctx.strokeStyle = hexA(col, a); ctx.lineWidth = 1 + 2.6*hot;
-    ctx.beginPath(); ctx.moveTo(cx + Math.cos(p.a)*rin*0.38, cy + Math.sin(p.a)*rin*0.38);
-    ctx.lineTo(p.x, p.y); ctx.stroke();
-    if (p.flash > 0.02 && !reduce){
-      const t = 1 - p.flash;
-      const px2 = cx + (p.x-cx)*t, py2 = cy + (p.y-cy)*t;
-      ctx.fillStyle = hexA('#ffffff', p.flash*0.9);
-      ctx.beginPath(); ctx.arc(px2, py2, 2.6 + p.flash*2.6, 0, 7); ctx.fill();
+  // edges
+  const running = new Set();
+  if (mode === 'live') for (const i of (snap.state.inflight||[])) for (const id of (i.nodes||[])) running.add(id);
+  for (const e of EDGES.values()){
+    const a = ENT.get(e.src), b = ENT.get(e.dst); if (!a || !b) continue;
+    const hot = Math.max(a.prox||0, b.prox||0), fresh = e.flash || 0;
+    const fade = Math.min(a.fade, b.fade);
+    let col, alpha, width;
+    if (e.type === 'CONTAINS' || e.type === 'IN_REPO'){ col = COLOR[b.cls === 'agent' ? a.cls : b.cls]; alpha = 0.22 + 0.3*hot; width = 1.1; }
+    else if (e.type === 'USED'){ col = COLOR.agent; alpha = 0.14 + 0.45*hot + 0.4*fresh; width = 1 + 0.8*Math.log2(1+e.w); }
+    else if (e.type === 'TOUCH'){ col = COLOR[b.cls]; alpha = 0.16 + 0.5*hot + 0.45*fresh; width = 1 + 0.9*Math.log2(1+e.w); }
+    else { col = COLOR[b.cls]; alpha = 0.16 + 0.4*hot; width = 1.1; }
+    ctx.strokeStyle = hexA(col, alpha*fade); ctx.lineWidth = width;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y);
+    if (e.type === 'TOUCH' || e.type === 'USED'){
+      const mx = (a.x+b.x)/2, my = (a.y+b.y)/2, nx = -(b.y-a.y), ny = (b.x-a.x), L = Math.hypot(nx,ny)||1;
+      const bow = ((hashf(e.src+e.dst) % 2) ? 1 : -1) * Math.min(26, L*0.12);
+      ctx.quadraticCurveTo(mx + nx/L*bow, my + ny/L*bow, b.x, b.y);
+    } else ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    if (e.type === 'TOUCH'){
+      const dir = VERB_DIR[e.verb] ?? 0;
+      if (dir > 0) arrow(ctx, a.x, a.y, b.x, b.y, 0.72, col, (0.35 + 0.6*fresh)*fade, 5);
+      else if (dir < 0) arrow(ctx, b.x, b.y, a.x, a.y, 0.72, col, (0.35 + 0.6*fresh)*fade, 5);
+    } else if (e.type === 'SPAWNED' || e.type === 'YIELDED' || e.type === 'IN_REPO'){
+      arrow(ctx, a.x, a.y, b.x, b.y, 0.7, col, 0.35*fade, 4);
+    }
+    if (fresh > 0.02 && !reduce && e.type !== 'CONTAINS'){   // a packet along a fresh edge
+      const t = 1 - fresh, px2 = a.x + (b.x-a.x)*t, py2 = a.y + (b.y-a.y)*t;
+      ctx.fillStyle = hexA('#ffffff', fresh*0.9); ctx.beginPath(); ctx.arc(px2, py2, 2.4 + fresh*2.4, 0, 7); ctx.fill();
     }
   }
 
-  // the core: the agent itself
-  const st = snap.state, busy = (st.inflight||[]).length > 0 && mode === 'live';
-  const beat = reduce ? 0 : (Math.sin(now/300)+1)/2;
-  ctx.strokeStyle = hexA('#3987e5', .55); ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.arc(cx, cy, rin*0.38, 0, 7); ctx.stroke();
-  ctx.fillStyle = `rgba(242,246,251,${busy ? .55+.45*beat : .35})`;
-  ctx.shadowColor = '#7ab4fa'; ctx.shadowBlur = busy ? 16+beat*18 : 10;
-  ctx.beginPath(); ctx.arc(cx, cy, 7 + (busy?beat*2.5:0), 0, 7); ctx.fill(); ctx.shadowBlur = 0;
-
-  const running = new Set();
-  if (mode === 'live') for (const i of (st.inflight||[])) for (const id of (i.nodes||[])) running.add(id);
-
+  // nodes
+  const ents = [...ENT.values()].sort((x,y) => (x.prox||0) - (y.prox||0));
+  const maxBurn = Math.max(1e-4, ...ents.filter(p => p.type !== 'tool' && p.type !== 'agent').map(p => p.burn||0));
+  const maxUse = Math.max(1, ...ents.filter(p => p.type === 'tool' || p.type === 'agent').map(p => p.touches||0));
   const boxes = [];
-  const maxBurn = Math.max(1e-4, ...ents.map(p => p.burn || 0));
   for (const p of ents){
-    const hot = p.prox != null ? p.prox : 1;
-    const col = COLOR[p.cls];
-    const base = 7 + 22*Math.sqrt((p.burn || 0)/maxBurn);
+    const hot = p.prox != null ? p.prox : 1, col = COLOR[p.cls];
+    const isHub = p.type === 'tool' || p.type === 'agent';
+    const base = isHub ? 8 + 14*Math.sqrt(p.touches/maxUse) : 6 + 20*Math.sqrt((p.burn||0)/maxBurn);
     const act = running.has(p.id) || p.flash > 0.25;
     const bb = act && !reduce ? (Math.sin(now/170 + p.seed)+1)/2 : 0;
     const breathe = reduce ? 0 : Math.sin(now/560 + p.seed)*0.03*hot;
     const r = base * (0.3 + 0.7*p.grow) * (1 + breathe + bb*0.17);
-    p.rad = r;                                   // separation needs to know the size
-    const alpha = (0.55 + 0.45*hot) * p.fade;
+    p.rad = r;
+    const alpha = (0.5 + 0.5*hot) * p.fade;
     ctx.save(); ctx.globalAlpha = alpha;
-    if (act && !reduce){
-      ctx.strokeStyle = hexA(col, 0.5*(1-bb)); ctx.lineWidth = 1.6;
-      ctx.beginPath(); ctx.arc(p.x, p.y, r + 5 + bb*13, 0, 7); ctx.stroke();
+    if (act && !reduce){ ctx.strokeStyle = hexA(col, 0.5*(1-bb)); ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r + 5 + bb*13, 0, 7); ctx.stroke(); }
+    ctx.shadowColor = col; ctx.shadowBlur = 6 + hot*18 + bb*18;
+    if (p.id === MAIN){
+      ctx.fillStyle = 'rgba(242,246,251,.9)'; ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.fill();
+    } else if (isHub){                                // hubs are squares: they are not things, they act
+      ctx.fillStyle = hexA(col, 0.22 + 0.25*hot); ctx.fillRect(p.x-r, p.y-r, 2*r, 2*r);
+      ctx.shadowBlur = 0; ctx.strokeStyle = hexA(col, 0.9); ctx.lineWidth = 1.8; ctx.strokeRect(p.x-r, p.y-r, 2*r, 2*r);
+      if (p.type === 'agent') glyph(ctx, 'spawn', p.x, p.y, Math.min(7, r*0.55), col, 1);
+      else kindIcon(ctx, 'tool', p.x, p.y, Math.min(6, r*0.5), col, 1);
+    } else if (p.type === 'dir' || p.type === 'repo' || p.type === 'domain'){   // containers: hollow
+      ctx.shadowBlur = 0; ctx.strokeStyle = hexA(col, 0.75); ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.stroke();
+      kindIcon(ctx, p.type, p.x, p.y, Math.min(6, r*0.6), col, 0.9);
+    } else {
+      ctx.fillStyle = hexA(col, 0.20 + 0.25*hot); ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.fill();
+      ctx.shadowBlur = 0; ctx.strokeStyle = hexA(col, 0.85); ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.stroke();
+      if (p.verb) glyph(ctx, p.verb, p.x, p.y, Math.min(5.6, r*0.6)*Math.min(1, p.grow*1.6), p.flash > 0.3 ? '#ffffff' : col, 1);
+      else kindIcon(ctx, p.type, p.x, p.y, Math.min(5.5, r*0.6), col, 0.9);
     }
-    ctx.shadowColor = col; ctx.shadowBlur = 8 + hot*20 + bb*18;
-    ctx.fillStyle = hexA(col, 0.20 + 0.25*hot);
-    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = hexA(col, 0.85); ctx.lineWidth = 1.8;
-    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.stroke();
-    glyph(ctx, p.verb, p.x, p.y, 5.6*Math.min(1, p.grow*1.6), p.flash > 0.3 ? '#ffffff' : col, 1);
-    if (p.err){
-      ctx.strokeStyle = '#e66767'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(p.x, p.y, r + 4, 0, 7); ctx.stroke();
-    }
-    if (p.touches > 1){
-      ctx.fillStyle = hexA(col, .95); ctx.font = 'bold 11px ui-monospace,monospace';
-      ctx.textAlign = 'center'; ctx.fillText('×'+p.touches, p.x, p.y + r + 14);
+    if (p.err){ ctx.strokeStyle = '#e66767'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x, p.y, r + 4, 0, 7); ctx.stroke(); }
+    if (p.touches > 1 && !isHub){
+      ctx.fillStyle = hexA(col, .95); ctx.font = 'bold 11px ui-monospace,monospace'; ctx.textAlign = 'center';
+      ctx.fillText('×'+p.touches, p.x, p.y + r + 14);
     }
     ctx.restore();
 
-    const txt = String(p.n.label).slice(0,30);
-    ctx.font = '13px ui-monospace,monospace';
-    const right = p.x >= cx;
-    ctx.textAlign = right ? 'left' : 'right';
-    const tw = ctx.measureText(txt).width;
-    const lx = right ? p.x + r + 10 : p.x - r - 10, ly = p.y + 4;
-    const box = right ? [lx-14, ly-13, lx+tw+2, ly+5] : [lx-tw-2, ly-13, lx+14, ly+5];
+    const txt = p.id === MAIN ? 'agent' : String(p.n.label).slice(0,28) + (isHub && p.type==='tool' ? ' ×'+p.touches : '');
+    ctx.font = (isHub ? 'bold ' : '') + '13px ui-monospace,monospace';
+    const right = p.x >= cx; ctx.textAlign = right ? 'left' : 'right';
+    const tw = ctx.measureText(txt).width, lx = right ? p.x + r + 9 : p.x - r - 9, ly = p.y + 4;
+    const box = right ? [lx-2, ly-13, lx+tw+2, ly+5] : [lx-tw-2, ly-13, lx+2, ly+5];
     const clash = boxes.some(b2 => !(box[2]<b2[0]||box[0]>b2[2]||box[3]<b2[1]||box[1]>b2[3]));
-    if (!clash){
+    if (!clash && (hot > 0.25 || isHub || r > 9 || p.deg > 2)){
       boxes.push(box);
-      ctx.fillStyle = 'rgba(8,13,24,.82)';
-      ctx.fillRect(box[0], box[1], box[2]-box[0]+4, box[3]-box[1]);
-      kindIcon(ctx, p.n.type, right ? lx-6 : lx+6, ly-4, 5, col, 0.6+0.4*hot);
-      ctx.fillStyle = hexA(hot > .3 ? '#f2f6fb' : '#b2c2d6', 1);
-      ctx.fillText(txt, right ? lx+5 : lx-5, ly);
+      ctx.fillStyle = 'rgba(8,13,24,.8)'; ctx.fillRect(box[0], box[1], box[2]-box[0], box[3]-box[1]);
+      ctx.fillStyle = hexA(hot > .3 || isHub ? '#f2f6fb' : '#b2c2d6', p.fade);
+      ctx.fillText(txt, lx, ly);
     }
   }
 }
@@ -730,23 +827,26 @@ addEventListener('mousemove', ev => {
 cv.addEventListener('mousemove', ev => {
   const r = cv.getBoundingClientRect(), mx = ev.clientX-r.left, my = ev.clientY-r.top;
   let best = null, bd = 1e9;
-  for (const p of ENT.values()){
-    const d = Math.hypot(p.x-mx, p.y-my);
-    if (d < 26 && d < bd){ bd = d; best = p; }
-  }
+  for (const p of ENT.values()){ const d = Math.hypot(p.x-mx, p.y-my); if (d < 26 && d < bd){ bd = d; best = p; } }
   hover = best;
   const tip = $('tip');
   if (!best){ tip.style.display = 'none'; return; }
   const n = best.n, age = refTime() - best.last;
+  const nb = [];
+  for (const e of EDGES.values()){
+    if (e.src === best.id && ENT.get(e.dst)) nb.push(`${e.type === 'TOUCH' ? (e.verb||'') : e.type.toLowerCase()} → ${ENT.get(e.dst).n.label}`);
+    else if (e.dst === best.id && ENT.get(e.src)) nb.push(`${ENT.get(e.src).n.label} → ${e.type === 'TOUCH' ? (e.verb||'') : e.type.toLowerCase()}`);
+  }
   tip.innerHTML = `<div class="h" style="color:${COLOR[best.cls]}">${esc(n.type)} · ${esc(n.label)}</div>`+
-    `<div class="r">${best.touches} touch(es) · burned ${fmtUsd(best.burn||0)} · ${esc(best.verb)}</div>`+
-    `<div class="r">last ${age<90?age.toFixed(0)+'s':fmtDur(age)} ago</div>`+
+    `<div class="r">${best.touches} touch(es) · ${best.deg} link(s)` + (best.burn ? ` · burned ${fmtUsd(best.burn)}` : '') + `</div>`+
+    (best.last > -1e8 ? `<div class="r">last ${age<90?age.toFixed(0)+'s':fmtDur(age)} ago${best.verb?' · '+esc(best.verb):''}</div>` : '')+
     (best.target ? `<div class="r">${esc(String(best.target).slice(0,90))}</div>` : '')+
-    (n.usd ? `<div class="r">attributed ${fmtUsd(n.usd)}</div>` : '')+
+    nb.slice(0,7).map(x => `<div class="r" style="color:var(--ink-3)">${esc(x)}</div>`).join('')+
+    (nb.length > 7 ? `<div class="r" style="color:var(--ink-3)">… ${nb.length-7} more</div>` : '')+
     (best.err ? `<div class="r" style="color:var(--bad)">last call errored</div>` : '');
   tip.style.display = 'block';
   tip.style.left = Math.min(innerWidth-390, ev.clientX+14)+'px';
-  tip.style.top = Math.min(innerHeight-130, ev.clientY+14)+'px';
+  tip.style.top = Math.min(innerHeight-160, ev.clientY+14)+'px';
 });
 cv.addEventListener('mouseleave', () => { hover = null; $('tip').style.display = 'none'; });
 cv.addEventListener('wheel', ev => {           // spread the field out, or draw it in
@@ -758,8 +858,10 @@ addEventListener('keydown', ev => {
   if (k===' '){ frozen = !frozen; ev.preventDefault(); }
   if (k==='t') showTable();
   if (k==='s') showPicker();
-  if (k==='r'){ ENT.clear(); ptr = 0; mode==='live' ? startReplay() : goLive(); }
+  if (k==='r'){ ENT.clear(); EDGES.clear(); ptr = 0; mode==='live' ? startReplay() : goLive(); }
   if (k==='escape' || k==='enter') goLive();
+  if (k==='-'){ KEEP = Math.max(8, Math.round(KEEP*0.8)); dirty = true; }
+  if (k==='='){ KEEP = Math.min(200, Math.round(KEEP*1.25)); dirty = true; }
   if (k==='[' && mode==='replay') rate *= 0.6;
   if (k===']' && mode==='replay') rate *= 1.6;
 });
@@ -798,7 +900,7 @@ mcv.addEventListener('click', ev => {
   let lo=0, hi=flows.length-1;
   while (lo<hi){ const m=(lo+hi+1)>>1; flows[m]<=f ? lo=m : hi=m-1; }
   mode = 'scrub'; cursor = times[lo];
-  ENT.clear(); ptr = 0;
+  ENT.clear(); EDGES.clear(); ptr = 0;
   $('mode').textContent='scrub'; $('mode').style.color='var(--c-artifact)'; paintChrome();
 });
 
@@ -833,7 +935,7 @@ async function showPicker(force){
     $('picklist').innerHTML = '<div class="sub">attaching…</div>';
     try { await fetch('/select?file=' + encodeURIComponent(f)); } catch(e){}
     $('picker').style.display = 'none';
-    snap = null; booted = false; EV = []; ENT.clear(); ptr = 0; seenEv = new Set();
+    snap = null; booted = false; EV = []; ENT.clear(); EDGES.clear(); POS.clear(); ptr = 0; seenEv = new Set();
   }));
 }
 
