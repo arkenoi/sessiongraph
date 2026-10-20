@@ -43,6 +43,23 @@ def target_of(tool, inp):
     return ""
 
 
+def describe(call, labels):
+    """What a call did, in the graph's own words: `watch matrix.log · probe
+    win11de-tup`, or `qtest capture win10-acc` when an instrument did it."""
+    links = call.get("links") or []
+    if not links:
+        return target_of(call.get("tool"), call.get("input"))
+    def lbl(nid):
+        return labels.get(nid) or nid.split(":", 1)[-1].rstrip("/").split("/")[-1]
+    via = [f"{lbl(s)} {v} {lbl(d)}" for s, d, v in links if s != "agent"]
+    own = [f"{v} {lbl(d)}" for s, d, v in links if s == "agent"]
+    parts, seen = [], set()
+    for p in via + own:
+        if p not in seen:
+            seen.add(p); parts.append(p)
+    return " · ".join(parts[:3]) + (f" +{len(parts) - 3}" if len(parts) > 3 else "")
+
+
 def parse_meta(text):
     """First prompt, cwd, branch and turn count from the head of a transcript."""
     title, cwd, branch, turns = None, None, None, 0
@@ -348,7 +365,10 @@ class Tailer:
             d = self.g.to_dict()
             now = time.time()
             idle = (now - self.last_ts) if self.last_ts else None
-            inflight = [{"tool": t, "target": target_of(t, i), "id": k, "nodes": h}
+            labels = {n["id"]: n.get("label") for n in d["nodes"] if n["type"] != "step"}
+            by_id = {c["id"]: c for c in d["calls"][-2000:]}
+            inflight = [{"tool": t, "target": describe(by_id.get(k) or {"tool": t, "input": i}, labels),
+                         "raw": target_of(t, i), "id": k, "nodes": h}
                         for k, (s, t, i, h) in list(self.g.pending.items())]
             # the stream needs every call, not just the tail: one event per touch
             # what each call cost: its turn's price, split across that turn's calls
@@ -359,7 +379,8 @@ class Tailer:
             step_side = {n["id"]: bool(n["attrs"].get("sidechain")) for n in d["nodes"] if n["type"] == "step"}
             events = []
             for c in d["calls"][-2000:]:
-                events.append({"tool": c["tool"], "target": target_of(c["tool"], c.get("input")),
+                events.append({"tool": c["tool"], "target": describe(c, labels),
+                               "raw": target_of(c["tool"], c.get("input")),
                                "ts": parse_ts(c.get("ts")), "bytes": c.get("result_bytes"),
                                "err": bool(c.get("is_error")), "nodes": c.get("nodes") or [],
                                "verb": c.get("verb") or "execute",
