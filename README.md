@@ -170,12 +170,24 @@ out of the model's context entirely. Poll in minutes, and run the pump on Haiku.
 ## Claude as the transport
 
 When the session you want isn't on any disk you can reach — a cloud session, or
-one you'd rather not ssh to — the fetcher can be Claude itself. The HUD doesn't
-care who fills the folder:
+one you'd rather not ssh to — the fetcher is Claude itself. Two commands, two
+terminals, no ssh and no token anywhere in this tool:
 
 ```sh
+./pump.sh session_01ABC...                        # pulls events via `claude -p`, every 2 min
 python3 server.py --watch-dir ~/.sessiongraph/dumps
 ```
+
+`pump.sh` asks the Claude CLI, in one short non-interactive turn, to call
+`list_events` on that session and write the raw result into the dump directory.
+The CLI carries your credentials; the HUD just watches the folder. Check first
+that your CLI actually has the remote-session tools — `claude mcp list` should
+show `claude-code-remote`; a bare CLI inside a cloud container does not, which is
+why this path is driven from your own machine.
+
+Each poll is one model turn, so poll in minutes (the third argument is seconds)
+and the loop is cheap. The HUD doesn't care who fills the folder, so a Routine
+or a script that produces the same files works the same way:
 
 Anything that can reach a session's events writes files in there and they are
 merged as they land: a Claude session with the Claude Code Remote tools calling
